@@ -1,0 +1,172 @@
+-- programs ------------------------------------------------
+
+entrypoints Program ;
+
+Program.   Program ::= [TopDef] ;
+
+TopFnDef.  TopDef ::= FnDef ;
+
+TopClassDef. TopDef ::= ClassDef ;
+
+separator TopDef "" ;
+
+Arg. 	   Arg ::= Type Ident;
+
+separator  Arg "," ;
+
+AttrDef.   AttrDef ::= Type [Ident] ";" ;
+
+separator  Ident "," ;
+
+FnDef.	   FnDef ::= Type Ident "(" [Arg] ")" Block ;
+
+-- Class definitions ---------------------------------------
+
+ClassDefSimple.    ClassDef   ::= "class" Ident "{" [ClassTopDef] "}" ;
+
+ClassDefExtended.  ClassDef ::= "class" Ident "extends" Ident "{" [ClassTopDef] "}" ;
+
+ClassAttrDef. ClassTopDef ::= AttrDef ;
+
+ClassFnDef.   ClassTopDef ::= FnDef ;
+
+separator ClassTopDef "" ;
+
+-- statements ----------------------------------------------
+
+Block.     Block ::= "{" [Stmt] "}" ;
+
+separator  Stmt "" ;
+
+Empty.     Stmt ::= ";" ;
+
+BStmt.     Stmt ::= Block ;
+
+Decl.      Stmt ::= Type [Item] ";" ;
+
+NoInit.    Item ::= Ident ;
+
+Init.      Item ::= Ident "=" Expr ;
+
+separator nonempty Item "," ;
+
+Ass.       Stmt ::= LValue "=" Expr ";" ;
+
+Incr.      Stmt ::= LValue "++" ";" ;
+
+Decr.      Stmt ::= LValue "--" ";" ;
+
+Ret.       Stmt ::= "return" Expr ";" ;
+
+VRet.      Stmt ::= "return" ";" ;
+
+Cond.      Stmt ::= "if" "(" Expr ")" Stmt ;
+
+CondElse.  Stmt ::= "if" "(" Expr ")" Stmt "else" Stmt ;
+
+While.     Stmt ::= "while" "(" Expr ")" Stmt ;
+
+SExp.      Stmt ::= Expr ";" ;
+
+ForLoop.   Stmt ::= "for" "(" Type1 Ident ":" Ident ")" Stmt ;
+
+-- Types ---------------------------------------------------
+
+Int.       Type1 ::= "int" ;
+
+Str.       Type1 ::= "string" ;
+
+Bool.      Type1 ::= "boolean" ;
+
+ClassType. Type1 ::= Ident ;
+
+Array.     Type ::= Type "[]" ;
+
+_.         Type ::= Type1 ;
+
+Void.      Type ::= "void" ;
+
+-- LValue --------------------------------------------------
+
+LValue.    LValue ::= Expr ;
+
+-- Expressions ---------------------------------------------
+
+-- workaround to avoid conflicts of cast expression
+token Null (')' [" \n\t"]* {"null"}) ;
+
+ECastedNull. Expr7 ::= "(" Type Null ;
+
+EVar.      Expr7 ::= Ident ;
+
+ELitInt.   Expr7 ::= Integer ;
+
+ELitTrue.  Expr7 ::= "true" ;
+
+ELitFalse. Expr7 ::= "false" ;
+
+ESelf.     Expr7 ::= "self" ;
+
+EApp.      Expr7 ::= Ident "(" [Expr] ")" ;
+
+EString.   Expr7 ::= String ;
+
+EArrayElem. Expr7 ::= Expr7 "[" Expr "]" ;
+
+EAttr.     Expr7 ::= Expr7 "." Ident ;
+
+EMethod.   Expr7 ::= Expr7 "." Ident "(" [Expr] ")" ;
+
+EAlloc.    Expr6 ::= "new" Type "[" Expr "]" ;
+
+ECtor.     Expr6 ::= "new" Ident ;
+
+Neg.       Expr5 ::= "-" Expr5 ;
+
+Not.       Expr5 ::= "!" Expr5 ;
+
+EMul.      Expr4 ::= Expr4 MulOp Expr5 ;
+
+EAdd.      Expr3 ::= Expr3 AddOp Expr4 ;
+
+ERel.      Expr2 ::= Expr2 RelOp Expr3 ;
+
+EAnd.      Expr1 ::= Expr2 "&&" Expr1 ;
+
+EOr.       Expr ::= Expr1 "||" Expr ;
+
+coercions  Expr 7 ;
+
+separator  Expr "," ;
+
+-- operators -----------------------------------------------
+
+Plus.      AddOp ::= "+" ;
+
+Minus.     AddOp ::= "-" ;
+
+Times.     MulOp ::= "*" ;
+
+Div.       MulOp ::= "/" ;
+
+Mod.       MulOp ::= "%" ;
+
+LTH.       RelOp ::= "<" ;
+
+LE.        RelOp ::= "<=" ;
+
+GTH.       RelOp ::= ">" ;
+
+GE.        RelOp ::= ">=" ;
+
+EQU.       RelOp ::= "==" ;
+
+NE.        RelOp ::= "!=" ;
+
+-- comments ------------------------------------------------
+
+comment    "#" ;
+
+comment    "//" ;
+
+comment    "/*" "*/" ;
