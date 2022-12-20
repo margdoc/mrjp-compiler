@@ -25,7 +25,7 @@ execProgram fileName parsed =
       printStdErr "ERROR"
       printStdErr (show err)
       exitFailure
-    Right _ -> runIntermediateMonad (transpile parsed) >>= \case
+    Right types -> runIntermediateMonad types (transpile parsed) >>= \case
         Left err -> do
           printStdErr "ERROR"
           printStdErr (show err)

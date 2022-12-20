@@ -11,8 +11,7 @@ import Data.Functor ( (<&>) )
 
 import qualified Grammar.Abs as Abs
 
-import Types ( TypeChecker, TEnv(..), TypeCheckError(..), TypeCheckException(TypeCheckException), Name, Type(..), ClassDef(..), FuncDef(..) )
-
+import TypeCheckerTypes ( GlobalTypes (..), TypeChecker, TEnv(..), TypeCheckError(..), TypeCheckException(..), Name, Type(..), ClassDef(..), FuncDef(..) )
 
 mainFunctionName :: String
 mainFunctionName = "main"
@@ -633,7 +632,7 @@ buildClassesAfterInheritance env = do
     ) classes }
 
 
-typeChecker :: Abs.Program -> TypeChecker ()
+typeChecker :: Abs.Program -> TypeChecker GlobalTypes
 typeChecker (Abs.Program _ topDefs) = do
   evalEnv <- foldM (\envTrans topDef ->
       local envTrans $ evalTypeChecker topDef <&> (.) envTrans
@@ -659,6 +658,11 @@ typeChecker (Abs.Program _ topDefs) = do
           checkClass (classNameFromDef classDef) classDef (classes Map.! classNameFromDef classDef)
         ) classesDefs
 
+      asks $ \env -> GlobalTypes {
+        globalFunctions = tenvFunctions env,
+        globalClasses = tenvClasses env
+      }
 
-runTypeChecker :: TypeChecker a -> TEnv -> IO (Either TypeCheckException a)
+
+runTypeChecker :: TypeChecker GlobalTypes -> TEnv -> IO (Either TypeCheckException GlobalTypes)
 runTypeChecker = runReaderT . runExceptT

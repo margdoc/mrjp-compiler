@@ -11,13 +11,19 @@ import qualified Data.Map as Map
 
 import qualified Grammar.Abs as Abs
 
-import TypeCheckerTypes ( Type (..) )
+import TypeCheckerTypes ( Type (..), GlobalTypes (..), FuncDef (..) )
 import IntermediateTypes ( Program, Label, ControlGraph (..), VarName, Block, Statement (..), Value (..), BinaryOpType (..), FunctionLabel (..) )
 
-type IntermediateMonad = ExceptT String IO
+type IntermediateMonad = ExceptT String (ReaderT IEnv IO)
 
-runIntermediateMonad :: IntermediateMonad a -> IO (Either String a)
-runIntermediateMonad = runExceptT
+data IEnv = IEnv
+    { iEnvTypes :: GlobalTypes
+    }
+
+runIntermediateMonad :: GlobalTypes -> IntermediateMonad a -> IO (Either String a)
+runIntermediateMonad types monad = runReaderT (runExceptT monad) $ IEnv
+    { iEnvTypes = types
+    }
 
 transpile :: Abs.Program -> IntermediateMonad Program
 transpile (Abs.Program _ defs) = mapM transpileDef defs <&> Map.fromList
@@ -71,16 +77,18 @@ initialControlGraphState = ControlGraphState
     , variablesTypes = Map.empty
     }
 
-data Env = Env
-    { variablesValues :: Map.Map VarName VarName
+data CEnv = CEnv
+    { cEnvVariablesValues :: Map.Map VarName VarName
+    , cEnvGlobalTypes :: GlobalTypes
     }
 
-initialEnv :: Env
-initialEnv = Env
-    { variablesValues = Map.empty
+initialEnv :: GlobalTypes -> CEnv
+initialEnv types = CEnv
+    { cEnvVariablesValues = Map.empty
+    , cEnvGlobalTypes = types
     }
 
-type ControlGraphMonad = ExceptT String (ReaderT Env (StateT ControlGraphState Identity))
+type ControlGraphMonad = ExceptT String (ReaderT CEnv (StateT ControlGraphState Identity))
 
 freshTmpNames :: Int -> ControlGraphMonad [VarName]
 freshTmpNames k = do
@@ -110,14 +118,14 @@ freshLabelsName = do
 
 
 runControlGraphMonad :: ControlGraphMonad () -> IntermediateMonad ControlGraph
-runControlGraphMonad controlGraphMonad =
+runControlGraphMonad controlGraphMonad = do
+    types <- asks iEnvTypes
+    let (err, state) = runIdentity $ runStateT (runReaderT (runExceptT controlGraphMonad) (initialEnv types)) initialControlGraphState
     case err of
         Left err -> throwError err
         Right _ -> do
             liftIO $ print state
             return $ currentGraph $ foldData state
-    where
-        (err, state) = runIdentity $ runStateT (runReaderT (runExceptT controlGraphMonad) initialEnv) initialControlGraphState
 
 modifyFoldData :: (TranspileStmtFoldData -> TranspileStmtFoldData) -> ControlGraphMonad ()
 modifyFoldData f = modify (\s -> s { foldData = f $ foldData s })
@@ -167,7 +175,7 @@ evalType = \case
   Abs.Array _ t -> undefined
 
 
-foldWithEnv :: (a -> ControlGraphMonad (Env -> Env)) -> [a] -> ControlGraphMonad (Env -> Env)
+foldWithEnv :: (a -> ControlGraphMonad (CEnv -> CEnv)) -> [a] -> ControlGraphMonad (CEnv -> CEnv)
 foldWithEnv _ [] = return id
 foldWithEnv f (x : xs) = do
     envChange <- f x
@@ -178,7 +186,7 @@ transpileFuncBody (Abs.Block _ stmts) = do
     foldWithEnv transpileFuncBodyStmt stmts
     return ()
 
-transpileFuncBodyStmt :: Abs.Stmt -> ControlGraphMonad (Env -> Env)
+transpileFuncBodyStmt :: Abs.Stmt -> ControlGraphMonad (CEnv -> CEnv)
 transpileFuncBodyStmt (Abs.SExp _ expr) = transpileFuncBodyExpr expr >> return id
 transpileFuncBodyStmt (Abs.Decl _ t decls) =
     foldWithEnv (transpileFuncBodyDecl t) decls
@@ -242,16 +250,16 @@ transpileFuncBodyStmt (Abs.While _ expr stmt) = do
 addNewVariable :: VarName -> Type -> ControlGraphMonad ()
 addNewVariable varName t = modify (\s -> s { variablesTypes = Map.insert varName t (variablesTypes s) })
 
-setType :: VarName -> Abs.Type -> ControlGraphMonad (Env -> Env, VarName)
+setType :: VarName -> Abs.Type -> ControlGraphMonad (CEnv -> CEnv, VarName)
 setType varName t = do
     t' <- evalType t
-    variablesValues' <- asks variablesValues
-    let newVarName = case Map.lookup varName variablesValues' of
+    cEnvVariablesValues' <- asks cEnvVariablesValues
+    let newVarName = case Map.lookup varName cEnvVariablesValues' of
             Nothing -> varName
             Just varName' -> varName' ++ "$"
 
     addNewVariable newVarName t'
-    return (\env -> env { variablesValues = Map.insert varName newVarName (variablesValues env) }, newVarName)
+    return (\env -> env { cEnvVariablesValues = Map.insert varName newVarName (cEnvVariablesValues env) }, newVarName)
 
 
 getTypeFromValue :: Value -> ControlGraphMonad Type
@@ -261,7 +269,7 @@ getTypeFromValue (Variable varName) = do
     return $ variablesTypes' Map.! varName
 
 
-transpileFuncBodyDecl :: Abs.Type -> Abs.Item -> ControlGraphMonad (Env -> Env)
+transpileFuncBodyDecl :: Abs.Type -> Abs.Item -> ControlGraphMonad (CEnv -> CEnv)
 transpileFuncBodyDecl t (Abs.NoInit _ (Abs.Ident varName)) = do
     (envChange, varName) <- setType varName t
     emit $ Assign varName (Constant 0)
@@ -288,7 +296,7 @@ transpileFuncBodyExpr (Abs.ELitInt _ i) = return $ Constant $ fromInteger i
 transpileFuncBodyExpr (Abs.ELitTrue _) = return $ Constant 1
 transpileFuncBodyExpr (Abs.ELitFalse _) = return $ Constant 0
 transpileFuncBodyExpr (Abs.EVar _ (Abs.Ident varName)) = do
-    varName' <- asks $ (Map.! varName) . variablesValues
+    varName' <- asks $ (Map.! varName) . cEnvVariablesValues
     return $ Variable varName'
 transpileFuncBodyExpr (Abs.EAdd _ expr1 op expr2) = do
     value1 <- transpileFuncBodyExpr expr1
@@ -298,21 +306,25 @@ transpileFuncBodyExpr (Abs.EAdd _ expr1 op expr2) = do
         TInt -> do
             tmpName <- freshTmpName
             addNewVariable tmpName TInt
+
             emit $ BinaryOp (transpileAddOp op) tmpName value1 value2
             return $ Variable tmpName
         _ -> undefined
 transpileFuncBodyExpr (Abs.EMul _ expr1 op expr2) = do
     value1 <- transpileFuncBodyExpr expr1
     value2 <- transpileFuncBodyExpr expr2
+
     tmpName <- freshTmpName
     addNewVariable tmpName TInt
+
     emit $ BinaryOp (transpileMulOp op) tmpName value1 value2
     return $ Variable tmpName
 transpileFuncBodyExpr (Abs.EApp _ (Abs.Ident funcName) exprs) = do
     values <- mapM transpileFuncBodyExpr exprs
-    tmpName <- freshTmpName
 
-    undefined
+    tmpName <- freshTmpName
+    funcReturnType' <- asks $ funcReturnType . (Map.! funcName) . globalFunctions . cEnvGlobalTypes
+    addNewVariable tmpName funcReturnType'
 
     emit $ Call tmpName (FunctionLabel funcName) values
     return $ Variable tmpName
