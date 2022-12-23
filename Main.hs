@@ -1,7 +1,10 @@
 {-# LANGUAGE LambdaCase #-}
+import Control.Monad (unless, when)
+import Data.Functor ((<&>))
 import System.Environment ( getArgs )
 import System.Exit        ( exitFailure, exitSuccess )
 import System.IO          ( hPutStrLn, stderr )
+import System.Process     ( system )
 
 import qualified Grammar.Abs as Abs
 import Grammar.Par
@@ -9,17 +12,31 @@ import Grammar.Par
     , pProgram
     )
 
-import TypeChecker ( runTypeChecker, typeChecker, emptyTEnv )
+import TypeChecker  ( runTypeChecker, typeChecker, emptyTEnv )
 import Intermediate ( transpile, runIntermediateMonad )
-import Common      ( (.>) )
+import Common       ( (.>) )
 import AsmGenerator (generateAsmCode)
-import System.Cmd (system)
+import TypeCheckerTypes (GlobalTypes)
 
 printStdErr :: String -> IO ()
 printStdErr = hPutStrLn stderr
 
-execProgram :: String -> Abs.Program -> IO ()
-execProgram fileName parsed =
+data CmdOptions = CmdOptions
+  { optHelp :: Bool
+  , optFile :: Maybe String
+  , optOnlyTypeChecker :: Bool
+  , optDebug :: Bool
+  }
+
+data CompileOptions = CompileOptions
+  { compileOptionFileName :: String
+  , compileOptionOnlyTypeChecker :: Bool
+  , compileOptionDebug :: Bool
+  }
+
+
+execProgram :: CompileOptions -> Abs.Program -> IO ()
+execProgram options parsed =
   runTypeChecker (typeChecker parsed) emptyTEnv >>= \case
     Left err -> do
       printStdErr "ERROR"
@@ -32,39 +49,53 @@ execProgram fileName parsed =
           exitFailure
         Right intermediate -> do
           printStdErr "OK"
-          print intermediate
-          let code = generateAsmCode intermediate
+          when (compileOptionDebug options) $ print types
 
-          let fileNameWithoutExt = reverse . drop 3 . reverse $ fileName
-          let asmFile = fileNameWithoutExt ++ ".s"
-          writeFile asmFile code
-          system $ "gcc -o " ++ fileNameWithoutExt ++ " " ++ asmFile
+          unless (compileOptionOnlyTypeChecker options) $ do
+            when (compileOptionDebug options) $ print intermediate
+            let code = generateAsmCode intermediate
+
+            let fileNameWithoutExt = reverse . drop 3 . reverse $ compileOptionFileName options
+            let asmFile = fileNameWithoutExt ++ ".s"
+            writeFile asmFile code
+            system $ "gcc -o " ++ fileNameWithoutExt ++ " " ++ asmFile
+            return ()
           exitSuccess
 
 
 main :: IO ()
-main = getArgs >>= \case
-    ["--help"] -> usage
-    [f]       -> runFile f
-    _          -> usage
+main = getArgs >>= (\case
+  CmdOptions True _ _ _ -> usage >> exitSuccess
+  CmdOptions _ Nothing _ _ -> usage >> exitFailure
+  CmdOptions _ (Just f) onlyTypeChecker debug -> runFile (CompileOptions f onlyTypeChecker debug)) . getCmdOptions
+
+
+getCmdOptions :: [String] -> CmdOptions
+getCmdOptions = foldr getOpt (CmdOptions False Nothing False False)
+  where
+    getOpt :: String -> CmdOptions -> CmdOptions
+    getOpt "--help" opt = opt { optHelp = True }
+    getOpt "--typechecker" opt = opt { optOnlyTypeChecker = True }
+    getOpt "--debug" opt = opt { optDebug = True }
+    getOpt f opt = opt { optFile = Just f }
 
 
 usage :: IO ()
 usage = do
   putStrLn $ unlines
-    [ "usage: Call with one of the following argument combinations:"
-    , "  --help          Display this help message."
-    , "  (no arguments)  Parse stdin."
-    , "  (files)         Parse content of files."
+    [ "usage: compiler [--help] [--typechecker] <file>:"
+    , "  --help           Display this help message."
+    , "  --typechecker    Run only typechecker."
+    , "  --debug          Print debug information."
+    , "  <file>           Parse content of the file."
     ]
-  exitFailure
 
 
-runFile :: String -> IO ()
-runFile f = readFile f >>= run f
+runFile :: CompileOptions -> IO ()
+runFile options = readFile (compileOptionFileName options) >>= run options
 
 
-run :: String -> String -> IO ()
+run :: CompileOptions -> String -> IO ()
 run f = myLexer .> pProgram .> \case
     Left err -> printStdErr err >> exitFailure
     Right parsed' -> execProgram f parsed' >> exitSuccess
