@@ -164,7 +164,7 @@ evalStatement' (Abs.Cond _ expr stmt) = evalExpression expr >>= \case
   TBool -> evalSingleStatement stmt >> return StmtNoReturn
   TLitBool True -> evalSingleStatement stmt
   TLitBool False -> evalSingleStatement stmt >> return StmtNoReturn
-  t -> throwException $ TCTypeMismatch t TBool
+  t -> throwException $ TCTypeMismatch TBool t
 evalStatement' (Abs.CondElse _ expr stmt1 stmt2) = evalExpression expr >>= \case
   TBool -> do
     ret1 <- evalSingleStatement stmt1
@@ -176,7 +176,7 @@ evalStatement' (Abs.CondElse _ expr stmt1 stmt2) = evalExpression expr >>= \case
       _ -> return StmtNoReturn
   TLitBool True -> evalSingleStatement stmt2 >> evalSingleStatement stmt1
   TLitBool False -> evalSingleStatement stmt1 >> evalSingleStatement stmt2
-  t -> throwException $ TCTypeMismatch t TBool
+  t -> throwException $ TCTypeMismatch TBool t
 evalStatement' (Abs.While _ expr stmt) = evalExpression expr >>= \case
   TBool -> evalSingleStatement stmt
   TLitBool True -> evalSingleStatement stmt >>= \case
@@ -184,7 +184,7 @@ evalStatement' (Abs.While _ expr stmt) = evalExpression expr >>= \case
     StmtDeclaration _ -> throwException TCDeclarationInSingleStatement
     _ -> return StmtInfiteLoop
   TLitBool False -> evalSingleStatement stmt >> return StmtNoReturn
-  t -> throwException $ TCTypeMismatch t TBool
+  t -> throwException $ TCTypeMismatch TBool t
 evalStatement' (Abs.BStmt _ block) = local (\env -> env {
       tenvBlockVariables = Map.empty,
       tenvVariables = Map.union (tenvBlockVariables env) (tenvVariables env)
@@ -210,10 +210,10 @@ evalStatement' (Abs.Ass _ lvalue expr) = do
   return StmtNoReturn
 evalStatement' (Abs.Incr _ lvalue) = evalLValue lvalue >>= \case
   TInt -> return StmtNoReturn
-  t -> throwException $ TCTypeMismatch t TInt
+  t -> throwException $ TCTypeMismatch TInt t
 evalStatement' (Abs.Decr _ lvalue) = evalLValue lvalue >>= \case
   TInt -> return StmtNoReturn
-  t -> throwException $ TCTypeMismatch t TInt
+  t -> throwException $ TCTypeMismatch TInt t
 evalStatement' (Abs.Decl _ t items) = do
   itemType <- evalType True t
   foldM (\acc item -> do
@@ -396,6 +396,7 @@ evalExpression' (Abs.ERel _ expr1 op expr2) = do
   t1 <- evalExpression expr1
   t2 <- evalExpression expr2
   case (t1, t2) of
+    (TVoid, _) -> throwException TCVoidComparison
     (TLitInt i1, TLitInt i2) -> return $ TLitBool $ case op of
       Abs.EQU _ -> i1 == i2
       Abs.NE _ -> i1 /= i2
@@ -438,7 +439,7 @@ evalExpression' (Abs.EArrayElem _ expr1 expr2) = do
     TArray t -> return t
     t -> throwException $ TCNotArray t
   exprType <- evalExpression expr2
-  assert (exprType == TInt) $ TCTypeMismatch exprType TInt
+  assert (exprType == TInt) $ TCTypeMismatch TInt exprType
   return arrayType
 evalExpression' (Abs.EAttr _ expr (Abs.Ident name)) = evalExpression expr >>= \case
   TArray _
@@ -469,7 +470,7 @@ evalExpression' (Abs.ECastedNull _ t _) = do
 
 
 checkFunction :: Maybe Type -> Abs.FnDef -> TypeChecker ()
-checkFunction selfType (Abs.FnDef _ retType _ args body) = do
+checkFunction selfType = errorHandlerDecorator $ \(Abs.FnDef _ retType (Abs.Ident funcName) args body) -> do
   let initialEnvChange = case selfType of
         Just t  -> setBlockType selfKeyword t
         Nothing -> id
@@ -484,7 +485,7 @@ checkFunction selfType (Abs.FnDef _ retType _ args body) = do
     returnType <- local (\env -> env { tenvReturnType = retType' }) $ evalBlock body >>= \case
       BlockReturn t -> return t
       BlockNoReturn -> do
-        assert (retType' == TVoid) TCNotAllPathsReturn
+        assert (retType' == TVoid) $ TCNotAllPathsReturn funcName
         return TVoid
     assert (retType' == returnType) $ TCReturnTypeError retType' returnType
 
@@ -514,8 +515,10 @@ buildClassContext className previousNames (ClassDef attrs methods parent) contex
         Just t -> return (contextes, t)
   mapM_ (\(methodName, method) -> case Map.lookup methodName funcs of
       Nothing -> return ()
-      Just originalMethod -> assert (method == originalMethod) $ TCOverrideMethodSignatureMismatch methodName
+      Just originalMethod -> assert (method == originalMethod) $ TCOverrideMethodSignatureMismatch methodName className
     ) $ Map.toList methods
+  let redeclaredAttrs = Map.keysSet attrs `Set.intersection` Map.keysSet vars
+  assert (Set.null redeclaredAttrs) $ TCAttributeRedeclaration (head $ Set.toList redeclaredAttrs) className
   return $ Map.insert className (Map.union attrs vars, Map.union methods funcs) parentContextes
 
 
@@ -658,9 +661,9 @@ typeChecker (Abs.Program _ topDefs) = do
           checkClass (classNameFromDef classDef) classDef (classes Map.! classNameFromDef classDef)
         ) classesDefs
 
-      asks $ \env -> GlobalTypes {
-        globalFunctions = tenvFunctions env,
-        globalClasses = tenvClasses env
+      asks $ \e -> GlobalTypes {
+        globalFunctions = tenvFunctions e,
+        globalClasses = tenvClasses e
       }
 
 

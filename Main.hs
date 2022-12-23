@@ -1,6 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
 import Control.Monad (unless, when)
-import Data.Functor ((<&>))
 import System.Environment ( getArgs )
 import System.Exit        ( exitFailure, exitSuccess )
 import System.IO          ( hPutStrLn, stderr )
@@ -16,7 +15,6 @@ import TypeChecker  ( runTypeChecker, typeChecker, emptyTEnv )
 import Intermediate ( transpile, runIntermediateMonad )
 import Common       ( (.>) )
 import AsmGenerator (generateAsmCode)
-import TypeCheckerTypes (GlobalTypes)
 
 printStdErr :: String -> IO ()
 printStdErr = hPutStrLn stderr
@@ -26,6 +24,7 @@ data CmdOptions = CmdOptions
   , optFile :: Maybe String
   , optOnlyTypeChecker :: Bool
   , optDebug :: Bool
+  , optUnknown :: Bool
   }
 
 data CompileOptions = CompileOptions
@@ -42,41 +41,41 @@ execProgram options parsed =
       printStdErr "ERROR"
       printStdErr (show err)
       exitFailure
-    Right types -> runIntermediateMonad types (transpile parsed) >>= \case
+    Right types ->  do
+      printStdErr "OK"
+      when (compileOptionDebug options) $ print types
+
+      unless (compileOptionOnlyTypeChecker options) $ runIntermediateMonad types (transpile parsed) >>= \case
         Left err -> do
-          printStdErr "ERROR"
-          printStdErr (show err)
-          exitFailure
+          error err
         Right intermediate -> do
-          printStdErr "OK"
-          when (compileOptionDebug options) $ print types
+          when (compileOptionDebug options) $ print intermediate
+          let code = generateAsmCode intermediate
 
-          unless (compileOptionOnlyTypeChecker options) $ do
-            when (compileOptionDebug options) $ print intermediate
-            let code = generateAsmCode intermediate
-
-            let fileNameWithoutExt = reverse . drop 3 . reverse $ compileOptionFileName options
-            let asmFile = fileNameWithoutExt ++ ".s"
-            writeFile asmFile code
-            system $ "gcc -o " ++ fileNameWithoutExt ++ " " ++ asmFile
-            return ()
-          exitSuccess
+          let fileNameWithoutExt = reverse . drop 3 . reverse $ compileOptionFileName options
+          let asmFile = fileNameWithoutExt ++ ".s"
+          writeFile asmFile code
+          _ <- system $ "gcc -o " ++ fileNameWithoutExt ++ " " ++ asmFile
+          return ()
+      exitSuccess
 
 
 main :: IO ()
 main = getArgs >>= (\case
-  CmdOptions True _ _ _ -> usage >> exitSuccess
-  CmdOptions _ Nothing _ _ -> usage >> exitFailure
-  CmdOptions _ (Just f) onlyTypeChecker debug -> runFile (CompileOptions f onlyTypeChecker debug)) . getCmdOptions
+  CmdOptions True _ _ _ _ -> usage >> exitSuccess
+  CmdOptions _ Nothing _ _ _ -> usage >> exitFailure
+  CmdOptions _ _ _ _ True -> usage >> exitFailure
+  CmdOptions _ (Just f) onlyTypeChecker debug _ -> runFile (CompileOptions f onlyTypeChecker debug)) . getCmdOptions
 
 
 getCmdOptions :: [String] -> CmdOptions
-getCmdOptions = foldr getOpt (CmdOptions False Nothing False False)
+getCmdOptions = foldr getOpt (CmdOptions False Nothing False False False)
   where
     getOpt :: String -> CmdOptions -> CmdOptions
     getOpt "--help" opt = opt { optHelp = True }
     getOpt "--typechecker" opt = opt { optOnlyTypeChecker = True }
     getOpt "--debug" opt = opt { optDebug = True }
+    getOpt ('-':_) opt = opt { optUnknown = True }
     getOpt f opt = opt { optFile = Just f }
 
 

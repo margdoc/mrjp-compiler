@@ -17,13 +17,13 @@ data Type = TInt | TBool | TString| TArray Type | TClass Name | TVoid | TLitInt 
 data FuncDef = FuncDef
   { funcReturnType :: Type
   , funcArgs :: [Type]
-  } deriving (Eq)
+  } deriving (Eq, Show)
 
 data ClassDef = ClassDef
   { classAttributes :: Map.Map Name Type
   , classMethods    :: Map.Map Name FuncDef
   , parentClass     :: Maybe Name
-  }
+  } deriving (Show)
 
 data TEnv = TEnv
   { tenvVariables      :: Map.Map Name Type
@@ -50,7 +50,7 @@ data TypeCheckError = TCVariableNotDeclared Name
                     | TCMainFunctionReturnType
                     | TCMainFunctionArgs
                     | TCReturnTypeError Type Type
-                    | TCNotAllPathsReturn
+                    | TCNotAllPathsReturn Name
                     | TCTypeMismatch Type Type
                     | TCNotArray Type
                     | TCVariableRedeclaration Name
@@ -68,9 +68,11 @@ data TypeCheckError = TCVariableNotDeclared Name
                     | TCNotLValue
                     | TCModifyingConstant
                     | TCNotCastable Type
-                    | TCOverrideMethodSignatureMismatch Name
+                    | TCOverrideMethodSignatureMismatch Name Name
                     | TCSelfOutsideClass
                     | TCRestrictedKeyword Name
+                    | TCVoidComparison
+                    | TCAttributeRedeclaration Name Name
 
 instance Eq Type where
   (==) TVoid TVoid = True
@@ -121,7 +123,7 @@ instance Show TypeCheckError where
   show TCMainFunctionReturnType = "Main function must return int"
   show TCMainFunctionArgs = "Main function must have no arguments"
   show (TCReturnTypeError expected actual) = "Return type " ++ show actual ++ " does not match expected type " ++ show expected
-  show TCNotAllPathsReturn = "Not all paths return a value"
+  show (TCNotAllPathsReturn funcName) = "Not all paths return a value in function " ++ funcName
   show (TCTypeMismatch expected actual) = "Type " ++ show actual ++ " does not match expected type " ++ show expected
   show (TCNotArray t) = "Type " ++ show t ++ " is not an array"
   show (TCVariableRedeclaration name) = "Variable " ++ name ++ " is already declared"
@@ -131,7 +133,7 @@ instance Show TypeCheckError where
   show (TCAddOperatorTypeMismatch t1 t2 op) = "Type " ++ show t1 ++ " does not match expected type " ++ show t2 ++ " for " ++ op ++ " operator"
   show TCFunctionType = "Function type is not supported"
   show (TCInvalidNumberOfArguments expected actual) = "Invalid number of arguments: expected " ++ show expected ++ ", actual " ++ show actual
-  show TCDeclarationInSingleStatement = "Variable declaration in single statement is not supported"
+  show TCDeclarationInSingleStatement = "Variable declaration in single statement is not allowed"
   show TCVoidVariableType = "Variable cannot be of type void"
   show TCReturnVoidType = "Returned type cannot be void"
   show (TCInvalidIntegerLiteral i) = "Invalid integer literal: " ++ show i
@@ -139,11 +141,13 @@ instance Show TypeCheckError where
   show TCNotLValue = "Expression is not an lvalue"
   show TCModifyingConstant = "Cannot modify constant"
   show (TCNotCastable t) = "Type " ++ show t ++ " is not castable"
-  show (TCOverrideMethodSignatureMismatch name) = "Method " ++ name ++ " has a different signature in a parent class"
+  show (TCOverrideMethodSignatureMismatch name className) = "Method " ++ name ++ " of class " ++ className ++ " has a different signature in the parent class"
   show TCSelfOutsideClass = "self is only allowed outside a class context"
   show (TCRestrictedKeyword name) = "Restricted keyword " ++ name ++ " cannot be used as an identifier"
+  show TCVoidComparison = "Comparison with void is not supported"
+  show (TCAttributeRedeclaration name className) = "Attribute " ++ name ++ " of class " ++ className ++ " is already declared in ancestor class"
 
 data GlobalTypes = GlobalTypes
   { globalFunctions :: Map.Map Name FuncDef
   , globalClasses   :: Map.Map Name ClassDef
-  }
+  } deriving (Show)
