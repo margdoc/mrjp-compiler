@@ -52,10 +52,10 @@ execProgram options parsed =
           when (compileOptionDebug options) $ print intermediate
           let code = generateAsmCode intermediate
 
-          let fileNameWithoutExt = reverse . drop 3 . reverse $ compileOptionFileName options
+          let fileNameWithoutExt = reverse . drop 4 . reverse $ compileOptionFileName options
           let asmFile = fileNameWithoutExt ++ ".s"
           writeFile asmFile code
-          _ <- system $ "gcc -o " ++ fileNameWithoutExt ++ " " ++ asmFile
+          _ <- system $ "gcc -o " ++ fileNameWithoutExt ++ " " ++ asmFile ++ " lib/runtime.o"
           return ()
       exitSuccess
 

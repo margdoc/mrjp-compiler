@@ -2,6 +2,7 @@ module IntermediateTypes where
 
 import Control.Monad.RWS ( RWS )
 import qualified Data.Map as Map
+import BasePrelude (intercalate)
 
 type Compiler a = RWS Env Output State (IO a)
 
@@ -15,10 +16,12 @@ type VarName = String
 
 data Value = Constant Int
            | Variable VarName
+           | Object VarName
 
 instance Show Value where
     show (Constant int) = show int
     show (Variable varName) = varName
+    show (Object varName) = "&" ++ varName
 
 type Label = String
 
@@ -84,7 +87,7 @@ instance Show Statement where
     show (Load varName value1 value2) = varName ++ " = " ++ show value1 ++ "[" ++ show value2 ++ "]"
     show (Store varName value1 value2) = show varName ++ "[" ++ show value1 ++ "] = " ++ show value2
     show (Assign varName value) = varName ++ " = " ++ show value
-    show (Call varName functionLabel values) = varName ++ " = " ++ show functionLabel ++ " " ++ show values
+    show (Call varName functionLabel values) = varName ++ " = " ++ show functionLabel ++ "(" ++ intercalate ", " (map show values) ++ ")"
     show (Goto label) = "goto " ++ label
     show (Return value) = "return " ++ show value
 

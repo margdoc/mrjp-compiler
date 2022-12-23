@@ -7,7 +7,7 @@ import Control.Monad.State (StateT (runStateT), modify)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
-import IntermediateTypes (Program, ControlGraph (graphData), Label, Statement (..), Block, Value (..), BinaryOpType (..))
+import IntermediateTypes (Program, ControlGraph (graphData), Label, Statement (..), Block, Value (..), BinaryOpType (..), FunctionLabel (..))
 
 
 generateCmd :: String -> String
@@ -74,31 +74,42 @@ emitComment = emitAsmLine . Comment
 emitEmptyLine :: FunctionBodyGenerator ()
 emitEmptyLine = emitAsmLine EmptyLine
 
-generateFuncBody :: ControlGraph -> FunctionBodyGenerator ()
-generateFuncBody controlGraph = do
+generateFuncBody :: Label -> ControlGraph -> FunctionBodyGenerator ()
+generateFuncBody funcName controlGraph = do
     emitCmd "push rbp"
     emitCmd "mov rbp, rsp"
-    emitCmd ("sub rsp, " ++ show (8 * length allVariables))
+    emitCmd ("sub rsp, " ++ show (8 * allVariablesLength))
     mapM_ (uncurry generateBlock) (Map.toAscList blocks)
     where
         blocks = graphData controlGraph
         allVariables = gatherAllVariables blocks
+        allVariablesLength = length allVariables
         varIndices = Map.fromList $ zip allVariables [1..]
 
+        generateLabel :: Label -> Label
+        generateLabel label = funcName ++ "$" ++ label
+
         varIndex :: String -> Int
-        varIndex varName = varIndices Map.! varName * 8
+        varIndex varName = 8 * case Map.lookup varName varIndices of
+            Just index -> index
+            Nothing -> error $ "Variable " ++ varName ++ " not found"
 
         varMemory :: String -> String
         varMemory varName = "QWORD PTR [rbp-" ++ show (varIndex varName) ++ "]"
 
         generateBlock :: Label -> Block -> FunctionBodyGenerator ()
         generateBlock label block = do
-            emitLabel label
+            emitLabel $ generateLabel label
             mapM_ generateStatementWithComment block
 
         generateValue :: Value -> String
         generateValue (Variable varName) = varMemory varName
+        generateValue (Object pointer) = varMemory pointer
         generateValue (Constant int) = show int
+
+        generateFunctionLabel :: FunctionLabel -> String
+        generateFunctionLabel (FunctionLabel label) = label
+        generateFunctionLabel (Pointer pointer) = show pointer
 
         generateBinaryOp :: BinaryOpType -> String
         generateBinaryOp Add = "add"
@@ -108,29 +119,49 @@ generateFuncBody controlGraph = do
 
         generateStatementWithComment :: Statement -> FunctionBodyGenerator ()
         generateStatementWithComment statement = do
-            emitComment (show statement)
+            emitComment $ show statement
             generateStatement statement
             emitEmptyLine
 
         generateStatement :: Statement -> FunctionBodyGenerator ()
         generateStatement (Assign varName value) = do
-            emitCmd ("mov rax, " ++ generateValue value)
-            emitCmd ("mov " ++ varMemory varName ++ ", rax")
+            emitCmd $ "mov rax, " ++ generateValue value
+            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
         generateStatement (Return value) = do
-            emitCmd ("mov rax, " ++ generateValue value)
+            emitCmd $ "mov rax, " ++ generateValue value
             emitCmd "leave"
             emitCmd "ret"
         generateStatement (BinaryOp op varName value1 value2) = do
-            emitCmd ("mov rax, " ++ generateValue value1)
-            emitCmd ("mov rdx, " ++ generateValue value2)
-            emitCmd (generateBinaryOp op ++ " rax, rdx")
-            emitCmd ("mov " ++ varMemory varName ++ ", rax")
+            emitCmd $ "mov rax, " ++ generateValue value1
+            emitCmd $ "mov rdx, " ++ generateValue value2
+            emitCmd $ generateBinaryOp op ++ " rax, rdx"
+            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
         generateStatement (Goto label) =
-            emitCmd ("jmp " ++ label)
+            emitCmd $ "jmp " ++ generateLabel label
         generateStatement (If value label1 label2) = do
-            emitCmd ("cmp " ++ generateValue value ++ ", 0")
-            emitCmd ("je " ++ label2)
-            emitCmd ("jmp " ++ label1)
+            emitCmd $ "cmp " ++ generateValue value ++ ", 0"
+            emitCmd $ "je " ++ generateLabel label2
+            emitCmd $ "jmp " ++ generateLabel label1
+        generateStatement (Call varName label values) = do
+            stackArguments <- generateFunctionArgs values
+            emitCmd $ "sub rsp, " ++ show (8 * stackArguments)
+            emitCmd $ "call " ++ generateFunctionLabel label
+            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+            emitCmd $ "add rsp, " ++ show (8 * stackArguments)
+
+        generateFunctionArgs :: [Value] -> FunctionBodyGenerator Int
+        generateFunctionArgs = generateFunctionArgs' ["rdi", "rsi", "rdx", "rcx", "r8", "r9"] 0
+            where
+                generateFunctionArgs' :: [String] -> Int -> [Value] -> FunctionBodyGenerator Int
+                generateFunctionArgs' _ i [] = return i
+                generateFunctionArgs' [] i (value:values) = do
+                    emitCmd ("mov rax, " ++ generateValue value)
+                    emitCmd ("mov QWORD PTR [rbp-" ++ show (8 * (i + 1 + allVariablesLength)) ++ "], rax")
+                    generateFunctionArgs' [] (i + 1) values
+                generateFunctionArgs' (reg:regs) i (value:values) = do
+                    emitCmd ("mov " ++ reg ++ ", " ++ generateValue value)
+                    generateFunctionArgs' regs i values
+
 
 
 gatherAllVariables :: Map.Map Label Block -> [String]
@@ -141,13 +172,14 @@ gatherAllVariables blocks = Set.toList $ foldr (flip $ foldr gatherVariables) Se
         gatherVariables (Load varName _ _) = Set.insert varName
         gatherVariables (BinaryOp _ varName _ _) = Set.insert varName
         gatherVariables (UnaryOp _ varName _) = Set.insert varName
+        gatherVariables (Call varName _ _) = Set.insert varName
         gatherVariables _ = id
 
 
 generateFunction :: Label -> ControlGraph -> FunctionBodyGenerator ()
 generateFunction label controlGraph = do
     emitLabel label
-    generateFuncBody controlGraph
+    generateFuncBody label controlGraph
 
 generateAsmCode :: Program -> String
 generateAsmCode program = runFunctionBodyGenerator $ do

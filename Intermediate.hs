@@ -36,7 +36,7 @@ transpileDef (Abs.TopFnDef _ (Abs.FnDef _ _ (Abs.Ident label) args body)) = do
 
 
 initialLabel :: Label
-initialLabel = "L0"
+initialLabel = "0"
 
 emptyGraph :: ControlGraph
 emptyGraph = ControlGraph
@@ -72,7 +72,7 @@ instance Show ControlGraphState where
 initialControlGraphState :: ControlGraphState
 initialControlGraphState = ControlGraphState
     { freshVarNames = map (\i -> "t" ++ show i) [1..]
-    , freshLabels = map (\i -> "L" ++ show i) [1..]
+    , freshLabels = map show [1..]
     , foldData = initialTranspileStmtFoldData
     , variablesTypes = Map.empty
     }
@@ -88,7 +88,7 @@ initialEnv types = CEnv
     , cEnvGlobalTypes = types
     }
 
-type ControlGraphMonad = ExceptT String (ReaderT CEnv (StateT ControlGraphState Identity))
+type ControlGraphMonad = ExceptT String (ReaderT CEnv (StateT ControlGraphState IO))
 
 freshTmpNames :: Int -> ControlGraphMonad [VarName]
 freshTmpNames k = do
@@ -120,11 +120,11 @@ freshLabelsName = do
 runControlGraphMonad :: ControlGraphMonad () -> IntermediateMonad ControlGraph
 runControlGraphMonad controlGraphMonad = do
     types <- asks iEnvTypes
-    let (err, state) = runIdentity $ runStateT (runReaderT (runExceptT controlGraphMonad) (initialEnv types)) initialControlGraphState
+    (err, state) <- liftIO $ runStateT (runReaderT (runExceptT controlGraphMonad) (initialEnv types)) initialControlGraphState
     case err of
         Left err -> throwError err
         Right _ -> do
-            liftIO $ print state
+            -- liftIO $ print state
             return $ currentGraph $ foldData state
 
 modifyFoldData :: (TranspileStmtFoldData -> TranspileStmtFoldData) -> ControlGraphMonad ()
@@ -322,9 +322,12 @@ transpileFuncBodyExpr (Abs.EMul _ expr1 op expr2) = do
 transpileFuncBodyExpr (Abs.EApp _ (Abs.Ident funcName) exprs) = do
     values <- mapM transpileFuncBodyExpr exprs
 
+    -- TODO: methods
     tmpName <- freshTmpName
     funcReturnType' <- asks $ funcReturnType . (Map.! funcName) . globalFunctions . cEnvGlobalTypes
     addNewVariable tmpName funcReturnType'
 
     emit $ Call tmpName (FunctionLabel funcName) values
-    return $ Variable tmpName
+    return $ case funcReturnType' of
+        TString -> Object tmpName
+        _ -> Variable tmpName
