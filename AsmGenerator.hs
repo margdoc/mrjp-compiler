@@ -7,7 +7,7 @@ import Control.Monad.State (StateT (runStateT), modify)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
-import IntermediateTypes (Program, ControlGraph (graphData), Label, Statement (..), Block, Value (..), BinaryOpType (..), FunctionLabel (..))
+import IntermediateTypes (Program, ControlGraph (graphData), Label, Statement (..), Block, Value (..), BinaryOpType (..), FunctionLabel (..), UnaryOpType (..))
 import qualified Data.List as List
 
 
@@ -114,8 +114,8 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                         allVariablesLength = length allVariables
                         varIndices = Map.fromList $ zip allVariables [1..]
 
-                        generateLabel :: Label -> Label
-                        generateLabel label = funcName ++ "$" ++ label
+                        generateJmpLabel :: Label -> Label
+                        generateJmpLabel label = funcName ++ "$" ++ label
 
                         varIndex :: String -> Int
                         varIndex varName = 8 * case Map.lookup varName varIndices of
@@ -127,7 +127,7 @@ generateAsmCode program = runFunctionBodyGenerator $ do
 
                         generateBlock :: Label -> Block -> FunctionBodyGenerator ()
                         generateBlock label block = do
-                            emitLabel $ generateLabel label
+                            emitLabel $ generateJmpLabel label
                             mapM_ generateStatementWithComment block
 
                         generateValue :: Value -> String
@@ -143,7 +143,6 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                         generateCalcBinaryOp Add = "add"
                         generateCalcBinaryOp Sub = "sub"
                         generateCalcBinaryOp Mul = "imul"
-                        generateCalcBinaryOp Div = "idiv"
                         generateCalcBinaryOp _ = error "Not allowed binary operation in this context"
 
                         generateRelBinaryOp :: BinaryOpType -> String
@@ -179,7 +178,7 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                             emitCmd $ "mov rsi, " ++ generateValue value2
                             emitCmd "call __concat"
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
-                        generateStatement (BinaryOp op varName value1 value2) | op `elem` [Add, Sub, Mul, Div] = do
+                        generateStatement (BinaryOp op varName value1 value2) | op `elem` [Add, Sub, Mul] = do
                             emitCmd $ "mov rax, " ++ generateValue value1
                             emitCmd $ "mov rdx, " ++ generateValue value2
                             emitCmd $ generateCalcBinaryOp op ++ " rax, rdx"
@@ -190,13 +189,35 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                             emitCmd "mov rax, 0"
                             emitCmd $ "set" ++ generateRelBinaryOp op ++ " al"
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (BinaryOp Div varName value1 value2) = do
+                            emitCmd $ "mov rax, " ++ generateValue value1
+                            emitCmd $ "mov rcx, " ++ generateValue value2
+                            emitCmd "cdq"
+                            emitCmd "idiv rcx"
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (BinaryOp Mod varName value1 value2) = do
+                            emitCmd $ "mov rax, " ++ generateValue value1
+                            emitCmd $ "mov rcx, " ++ generateValue value2
+                            emitCmd "cdq"
+                            emitCmd "idiv rcx"
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rdx"
+                        generateStatement (UnaryOp Neg varName value) = do
+                            emitCmd $ "mov rax, " ++ generateValue value
+                            emitCmd "neg rax"
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (UnaryOp Not varName value) = do
+                            emitCmd $ "mov rax, " ++ generateValue value
+                            emitCmd "cmp rax, 0"
+                            emitCmd "mov rax, 0"
+                            emitCmd "sete al"
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (Goto label) =
-                            emitCmd $ "jmp " ++ generateLabel label
+                            emitCmd $ "jmp " ++ generateJmpLabel label
                         generateStatement (If value label1 label2) = do
                             emitCmd $ "mov rax, " ++ generateValue value
                             emitCmd "cmp rax, 0"
-                            emitCmd $ "je " ++ generateLabel label2
-                            emitCmd $ "jmp " ++ generateLabel label1
+                            emitCmd $ "je " ++ generateJmpLabel label2
+                            emitCmd $ "jmp " ++ generateJmpLabel label1
                         generateStatement (Call varName label values) = do
                             stackArguments <- generateFunctionArgs values
                             emitCmd $ "sub rsp, " ++ show (8 * stackArguments)
