@@ -22,7 +22,6 @@ void printString(char* s) {
 }
 
 char* readString() {
-    // getline
     char* s = NULL;
     size_t len = 0;
     ssize_t read = getline(&s, &len, stdin);

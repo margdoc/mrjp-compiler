@@ -37,8 +37,6 @@ data BinaryOpType = Add
                   | Mul
                   | Div
                   | Mod
-                  | And
-                  | Or
                   | Equal
                   | NotEqual
                   | Less
@@ -46,6 +44,7 @@ data BinaryOpType = Add
                   | Greater
                   | GreaterEqual
                   | Concat
+                  deriving (Eq)
 
 instance Show BinaryOpType where
     show Add = "+"
@@ -53,8 +52,6 @@ instance Show BinaryOpType where
     show Mul = "*"
     show Div = "/"
     show Mod = "%"
-    show And = "&&"
-    show Or = "||"
     show Equal = "=="
     show NotEqual = "!="
     show Less = "<"

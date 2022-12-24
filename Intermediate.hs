@@ -294,6 +294,15 @@ transpileMulOp = \case
     Abs.Div _ -> Div
     Abs.Mod _ -> Mod
 
+transpileRelOp :: Abs.RelOp -> BinaryOpType
+transpileRelOp = \case
+    Abs.LTH _ -> Less
+    Abs.LE _ -> LessEqual
+    Abs.GTH _ -> Greater
+    Abs.GE _ -> GreaterEqual
+    Abs.EQU _ -> Equal
+    Abs.NE _ -> NotEqual
+
 transpileFuncBodyExpr :: Abs.Expr -> ControlGraphMonad Value
 transpileFuncBodyExpr (Abs.ELitInt _ i) = return $ Constant $ fromInteger i
 transpileFuncBodyExpr (Abs.ELitTrue _) = return $ Constant 1
@@ -334,6 +343,15 @@ transpileFuncBodyExpr (Abs.EMul _ expr1 op expr2) = do
 
     emit $ BinaryOp (transpileMulOp op) tmpName value1 value2
     return $ Variable tmpName
+transpileFuncBodyExpr (Abs.ERel _ expr1 op expr2) = do
+    value1 <- transpileFuncBodyExpr expr1
+    value2 <- transpileFuncBodyExpr expr2
+
+    tmpName <- freshTmpName
+    addNewVariable tmpName TBool
+
+    emit $ BinaryOp (transpileRelOp op) tmpName value1 value2
+    return $ Variable tmpName
 transpileFuncBodyExpr (Abs.EApp _ (Abs.Ident funcName) exprs) = do
     values <- mapM transpileFuncBodyExpr exprs
 
@@ -346,3 +364,51 @@ transpileFuncBodyExpr (Abs.EApp _ (Abs.Ident funcName) exprs) = do
     return $ case funcReturnType' of
         TString -> Object tmpName
         _ -> Variable tmpName
+transpileFuncBodyExpr (Abs.EOr _ expr1 expr2) = do
+    value1 <- transpileFuncBodyExpr expr1
+    label1 <- freshLabelsName
+    label2 <- freshLabelsName
+    label3 <- freshLabelsName
+    emit $ If value1 label1 label2
+
+    tmpName <- freshTmpName
+    addNewVariable tmpName TBool
+
+    currentLabel' <- gets $ currentLabel . foldData
+    addEdges [(currentLabel', [label1, label2]), (label1, [label3]), (label2, [label3])]
+
+    newBlock label1 $ do
+        emit $ Assign tmpName (Constant 1)
+        emit $ Goto label3
+
+    newBlock label2 $ do
+        value2 <- transpileFuncBodyExpr expr2
+        emit $ Assign tmpName value2
+        emit $ Goto label3
+
+    setLabel label3
+    return $ Variable tmpName
+transpileFuncBodyExpr (Abs.EAnd _ expr1 expr2) = do
+    value1 <- transpileFuncBodyExpr expr1
+    label1 <- freshLabelsName
+    label2 <- freshLabelsName
+    label3 <- freshLabelsName
+    emit $ If value1 label1 label2
+
+    tmpName <- freshTmpName
+    addNewVariable tmpName TBool
+
+    currentLabel' <- gets $ currentLabel . foldData
+    addEdges [(currentLabel', [label1, label2]), (label1, [label3]), (label2, [label3])]
+
+    newBlock label1 $ do
+        value2 <- transpileFuncBodyExpr expr2
+        emit $ Assign tmpName value2
+        emit $ Goto label3
+
+    newBlock label2 $ do
+        emit $ Assign tmpName (Constant 1)
+        emit $ Goto label3
+
+    setLabel label3
+    return $ Variable tmpName

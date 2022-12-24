@@ -8,6 +8,7 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 
 import IntermediateTypes (Program, ControlGraph (graphData), Label, Statement (..), Block, Value (..), BinaryOpType (..), FunctionLabel (..))
+import qualified Data.List as List
 
 
 generateCmd :: String -> String
@@ -138,11 +139,22 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                         generateFunctionLabel (FunctionLabel label) = label
                         generateFunctionLabel (Pointer pointer) = show pointer
 
-                        generateBinaryOp :: BinaryOpType -> String
-                        generateBinaryOp Add = "add"
-                        generateBinaryOp Sub = "sub"
-                        generateBinaryOp Mul = "imul"
-                        generateBinaryOp Div = "idiv"
+                        generateCalcBinaryOp :: BinaryOpType -> String
+                        generateCalcBinaryOp Add = "add"
+                        generateCalcBinaryOp Sub = "sub"
+                        generateCalcBinaryOp Mul = "imul"
+                        generateCalcBinaryOp Div = "idiv"
+                        generateCalcBinaryOp _ = error "Not allowed binary operation in this context"
+
+                        generateRelBinaryOp :: BinaryOpType -> String
+                        generateRelBinaryOp Equal = "e"
+                        generateRelBinaryOp NotEqual = "ne"
+                        generateRelBinaryOp Less = "l"
+                        generateRelBinaryOp LessEqual = "le"
+                        generateRelBinaryOp Greater = "g"
+                        generateRelBinaryOp GreaterEqual = "ge"
+                        generateRelBinaryOp _ = error "Not allowed binary operation in this context"
+
 
                         generateStatementWithComment :: Statement -> FunctionBodyGenerator ()
                         generateStatementWithComment statement = do
@@ -167,15 +179,22 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                             emitCmd $ "mov rsi, " ++ generateValue value2
                             emitCmd "call __concat"
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
-                        generateStatement (BinaryOp op varName value1 value2) = do
+                        generateStatement (BinaryOp op varName value1 value2) | op `elem` [Add, Sub, Mul, Div] = do
                             emitCmd $ "mov rax, " ++ generateValue value1
                             emitCmd $ "mov rdx, " ++ generateValue value2
-                            emitCmd $ generateBinaryOp op ++ " rax, rdx"
+                            emitCmd $ generateCalcBinaryOp op ++ " rax, rdx"
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (BinaryOp op varName value1 value2) | op `elem` [Equal, NotEqual, Greater, GreaterEqual, Less, LessEqual] = do
+                            emitCmd $ "mov rax, " ++ generateValue value1
+                            emitCmd $ "cmp rax, " ++ generateValue value2
+                            emitCmd "mov rax, 0"
+                            emitCmd $ "set" ++ generateRelBinaryOp op ++ " al"
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (Goto label) =
                             emitCmd $ "jmp " ++ generateLabel label
                         generateStatement (If value label1 label2) = do
-                            emitCmd $ "cmp " ++ generateValue value ++ ", 0"
+                            emitCmd $ "mov rax, " ++ generateValue value
+                            emitCmd "cmp rax, 0"
                             emitCmd $ "je " ++ generateLabel label2
                             emitCmd $ "jmp " ++ generateLabel label1
                         generateStatement (Call varName label values) = do
