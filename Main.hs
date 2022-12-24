@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 import Control.Monad (unless, when)
 import System.Environment ( getArgs )
-import System.Exit        ( exitFailure, exitSuccess )
+import System.Exit        ( exitFailure, exitSuccess, ExitCode (ExitSuccess, ExitFailure) )
 import System.IO          ( hPutStrLn, stderr )
 import System.Process     ( system )
 
@@ -55,8 +55,9 @@ execProgram options parsed =
           let fileNameWithoutExt = reverse . drop 4 . reverse $ compileOptionFileName options
           let asmFile = fileNameWithoutExt ++ ".s"
           writeFile asmFile code
-          _ <- system $ "gcc -o " ++ fileNameWithoutExt ++ " " ++ asmFile ++ " lib/runtime.o"
-          return ()
+          system ("gcc -o " ++ fileNameWithoutExt ++ " " ++ asmFile ++ " lib/runtime.o") >>= \case
+            ExitSuccess -> return ()
+            ExitFailure _ -> exitFailure
       exitSuccess
 
 

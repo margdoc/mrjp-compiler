@@ -267,6 +267,9 @@ getTypeFromValue (Constant _) = return TInt
 getTypeFromValue (Variable varName) = do
     variablesTypes' <- gets variablesTypes
     return $ variablesTypes' Map.! varName
+getTypeFromValue (Object varName) = do
+    variablesTypes' <- gets variablesTypes
+    return $ variablesTypes' Map.! varName
 
 
 transpileFuncBodyDecl :: Abs.Type -> Abs.Item -> ControlGraphMonad (CEnv -> CEnv)
@@ -295,6 +298,12 @@ transpileFuncBodyExpr :: Abs.Expr -> ControlGraphMonad Value
 transpileFuncBodyExpr (Abs.ELitInt _ i) = return $ Constant $ fromInteger i
 transpileFuncBodyExpr (Abs.ELitTrue _) = return $ Constant 1
 transpileFuncBodyExpr (Abs.ELitFalse _) = return $ Constant 0
+transpileFuncBodyExpr (Abs.EString _ s) = do
+    tmpName <- freshTmpName
+    addNewVariable tmpName TString
+
+    emit $ AssignString tmpName s
+    return $ Object tmpName
 transpileFuncBodyExpr (Abs.EVar _ (Abs.Ident varName)) = do
     varName' <- asks $ (Map.! varName) . cEnvVariablesValues
     return $ Variable varName'
@@ -302,14 +311,20 @@ transpileFuncBodyExpr (Abs.EAdd _ expr1 op expr2) = do
     value1 <- transpileFuncBodyExpr expr1
     value2 <- transpileFuncBodyExpr expr2
     t <- getTypeFromValue value1
-    case t of
-        TInt -> do
+    case (t, op) of
+        (TInt, _) -> do
             tmpName <- freshTmpName
             addNewVariable tmpName TInt
 
             emit $ BinaryOp (transpileAddOp op) tmpName value1 value2
             return $ Variable tmpName
-        _ -> undefined
+        (TString, Abs.Plus _) -> do
+            tmpName <- freshTmpName
+            addNewVariable tmpName TString
+
+            emit $ BinaryOp Concat tmpName value1 value2
+            return $ Object tmpName
+        _ -> error "Invalid types for addition"
 transpileFuncBodyExpr (Abs.EMul _ expr1 op expr2) = do
     value1 <- transpileFuncBodyExpr expr1
     value2 <- transpileFuncBodyExpr expr2

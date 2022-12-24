@@ -45,6 +45,7 @@ data BinaryOpType = Add
                   | LessEqual
                   | Greater
                   | GreaterEqual
+                  | Concat
 
 instance Show BinaryOpType where
     show Add = "+"
@@ -60,6 +61,7 @@ instance Show BinaryOpType where
     show LessEqual = "<="
     show Greater = ">"
     show GreaterEqual = ">="
+    show Concat = "++"
 
 data UnaryOpType = Not
                  | Neg
@@ -75,6 +77,7 @@ data Statement = BinaryOp BinaryOpType VarName Value Value
                | Load VarName Value Value     -- value1 = value2[value3]
                | Store VarName Value Value    -- value1[value2] = value3
                | Assign VarName Value
+               | AssignString VarName String
                | Call VarName FunctionLabel [Value]   -- function_label arguments...
                | Goto Label
                | Return Value
@@ -87,6 +90,7 @@ instance Show Statement where
     show (Load varName value1 value2) = varName ++ " = " ++ show value1 ++ "[" ++ show value2 ++ "]"
     show (Store varName value1 value2) = show varName ++ "[" ++ show value1 ++ "] = " ++ show value2
     show (Assign varName value) = varName ++ " = " ++ show value
+    show (AssignString varName string) = varName ++ " = " ++ show string
     show (Call varName functionLabel values) = varName ++ " = " ++ show functionLabel ++ "(" ++ intercalate ", " (map show values) ++ ")"
     show (Goto label) = "goto " ++ label
     show (Return value) = "return " ++ show value
