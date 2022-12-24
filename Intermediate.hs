@@ -194,6 +194,9 @@ transpileFuncBodyStmt (Abs.Ret _ expr) = do
     value <- transpileFuncBodyExpr expr
     emit $ Return value
     return id
+transpileFuncBodyStmt (Abs.VRet _) = do
+    emit VReturn
+    return id
 transpileFuncBodyStmt (Abs.BStmt _ block) = transpileFuncBody block >> return id
 transpileFuncBodyStmt (Abs.Cond _ expr stmt) = do
     value <- transpileFuncBodyExpr expr
@@ -245,6 +248,28 @@ transpileFuncBodyStmt (Abs.While _ expr stmt) = do
         emit $ Goto label1
 
     setLabel label3
+    return id
+transpileFuncBodyStmt (Abs.Incr _ (Abs.LValue _ expr)) = do
+    (varName, value) <- transpileFuncBodyExpr expr <&> \case
+        value@(Variable varName) -> (varName, value)
+        _ -> error "Incr: not a variable"
+
+    emit $ BinaryOp Add varName value (Constant 1)
+    return id
+transpileFuncBodyStmt (Abs.Decr _ (Abs.LValue _ expr)) = do
+    (varName, value) <- transpileFuncBodyExpr expr <&> \case
+        value@(Variable varName) -> (varName, value)
+        _ -> error "Decr: not a variable"
+
+    emit $ BinaryOp Sub varName value (Constant 1)
+    return id
+transpileFuncBodyStmt (Abs.Ass _ (Abs.LValue _ expr1) expr2) = do
+    varName <- transpileFuncBodyExpr expr1 <&> \case
+        Variable varName -> varName
+        _ -> error "Ass: not a variable"
+
+    value <- transpileFuncBodyExpr expr2
+    emit $ Assign varName value
     return id
 
 addNewVariable :: VarName -> Type -> ControlGraphMonad ()

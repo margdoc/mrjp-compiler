@@ -173,6 +173,9 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                             emitCmd $ "mov rax, " ++ generateValue value
                             emitCmd "leave"
                             emitCmd "ret"
+                        generateStatement VReturn = do
+                            emitCmd "leave"
+                            emitCmd "ret"
                         generateStatement (BinaryOp Concat varName value1 value2) = do
                             emitCmd $ "mov rdi, " ++ generateValue value1
                             emitCmd $ "mov rsi, " ++ generateValue value2

@@ -78,6 +78,7 @@ data Statement = BinaryOp BinaryOpType VarName Value Value
                | Call VarName FunctionLabel [Value]   -- function_label arguments...
                | Goto Label
                | Return Value
+               | VReturn
 
 instance Show Statement where
     show (BinaryOp op varName value1 value2) = varName ++ " = " ++ show value1 ++ " " ++ show op ++ " " ++ show value2
