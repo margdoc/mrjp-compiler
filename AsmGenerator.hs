@@ -8,7 +8,6 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 
 import IntermediateTypes (Program, ControlGraph (graphData), Label, Statement (..), Block, Value (..), BinaryOpType (..), FunctionLabel (..), UnaryOpType (..))
-import qualified Data.List as List
 
 
 generateCmd :: String -> String

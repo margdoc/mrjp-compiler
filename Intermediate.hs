@@ -1,9 +1,8 @@
 {-# LANGUAGE LambdaCase #-}
 module Intermediate ( transpile, runIntermediateMonad ) where
 
-import Control.Monad (foldM, foldM_, when)
-import Control.Monad.Except (ExceptT, MonadError (throwError), runExcept, runExceptT, MonadIO (liftIO))
-import Control.Monad.Identity (Identity (runIdentity))
+import Control.Monad (when)
+import Control.Monad.Except (ExceptT, MonadError (throwError), runExceptT, MonadIO (liftIO))
 import Control.Monad.Reader (ReaderT (runReaderT), MonadReader (local), asks)
 import Control.Monad.State (StateT (runStateT), gets, modify)
 import Data.Functor ((<&>))
@@ -30,7 +29,7 @@ transpile (Abs.Program _ defs) = mapM transpileDef defs <&> Map.fromList
 
 
 transpileDef :: Abs.TopDef -> IntermediateMonad (Label, ControlGraph)
-transpileDef (Abs.TopFnDef _ (Abs.FnDef _ _ (Abs.Ident label) args body)) = do
+transpileDef (Abs.TopFnDef _ (Abs.FnDef _ _ (Abs.Ident label) _ body)) = do
     controlGraph <- runControlGraphMonad (transpileFuncBody body >> pushBlock >> return ())
     return (label, controlGraph)
 
@@ -71,8 +70,8 @@ instance Show ControlGraphState where
 
 initialControlGraphState :: ControlGraphState
 initialControlGraphState = ControlGraphState
-    { freshVarNames = map (\i -> "t" ++ show i) [1..]
-    , freshLabels = map show [1..]
+    { freshVarNames = map (\i -> "t" ++ show i) [1 :: Int ..]
+    , freshLabels = map show [1 :: Int ..]
     , foldData = initialTranspileStmtFoldData
     , variablesTypes = Map.empty
     }
@@ -122,7 +121,7 @@ runControlGraphMonad controlGraphMonad = do
     types <- asks iEnvTypes
     (err, state) <- liftIO $ runStateT (runReaderT (runExceptT controlGraphMonad) (initialEnv types)) initialControlGraphState
     case err of
-        Left err -> throwError err
+        Left errString -> throwError errString
         Right _ -> do
             -- liftIO $ print state
             return $ currentGraph $ foldData state
@@ -158,7 +157,7 @@ newBlock :: Label -> ControlGraphMonad a -> ControlGraphMonad ()
 newBlock label prog = do
     pushBlock
     setLabel label
-    prog
+    _ <- prog
     pushBlock
 
 emit :: Statement -> ControlGraphMonad ()
@@ -170,9 +169,9 @@ evalType = \case
   Abs.Bool _ -> return TBool
   Abs.Str _ -> return TString
   Abs.Void _ -> return TVoid
-  Abs.ClassType _ (Abs.Ident name) -> undefined
+  Abs.ClassType _ _ -> undefined
   -- Abs.Array _ (Abs.Array _ _) -> throwException TCMultiDimensionalArray
-  Abs.Array _ t -> undefined
+  Abs.Array _ _ -> undefined
 
 
 foldWithEnv :: (a -> ControlGraphMonad (CEnv -> CEnv)) -> [a] -> ControlGraphMonad (CEnv -> CEnv)
@@ -183,7 +182,7 @@ foldWithEnv f (x : xs) = do
 
 transpileFuncBody :: Abs.Block -> ControlGraphMonad ()
 transpileFuncBody (Abs.Block _ stmts) = do
-    foldWithEnv transpileFuncBodyStmt stmts
+    _ <- foldWithEnv transpileFuncBodyStmt stmts
     return ()
 
 transpileFuncBodyStmt :: Abs.Stmt -> ControlGraphMonad (CEnv -> CEnv)
@@ -207,7 +206,7 @@ transpileFuncBodyStmt (Abs.Cond _ expr stmt) = do
     addEdges [(currentLabel', [label1, label2]), (label1, [label2])]
 
     newBlock label1 $ do
-        transpileFuncBodyStmt stmt
+        _ <- transpileFuncBodyStmt stmt
         emit $ Goto label2
 
     setLabel label2
@@ -222,11 +221,11 @@ transpileFuncBodyStmt (Abs.CondElse _ expr stmt1 stmt2) = do
     addEdges [(currentLabel', [label1, label2]), (label1, [label3]), (label2, [label3])]
 
     newBlock label1 $ do
-        transpileFuncBodyStmt stmt1
+        _ <- transpileFuncBodyStmt stmt1
         emit $ Goto label3
 
     newBlock label2 $ do
-        transpileFuncBodyStmt stmt2
+        _ <- transpileFuncBodyStmt stmt2
         emit $ Goto label3
 
     setLabel label3
@@ -244,7 +243,7 @@ transpileFuncBodyStmt (Abs.While _ expr stmt) = do
         emit $ If value label2 label3
 
     newBlock label2 $ do
-        transpileFuncBodyStmt stmt
+        _ <- transpileFuncBodyStmt stmt
         emit $ Goto label1
 
     setLabel label3
@@ -291,21 +290,25 @@ getTypeFromValue :: Value -> ControlGraphMonad Type
 getTypeFromValue (Constant _) = return TInt
 getTypeFromValue (Variable varName) = do
     variablesTypes' <- gets variablesTypes
-    return $ variablesTypes' Map.! varName
+    case Map.lookup varName variablesTypes' of
+        Nothing -> error $ "Variable " ++ varName ++ " not found (Variable)"
+        Just t -> return t
 getTypeFromValue (Object varName) = do
     variablesTypes' <- gets variablesTypes
-    return $ variablesTypes' Map.! varName
+    case Map.lookup varName variablesTypes' of
+        Nothing -> error $ "Variable " ++ varName ++ " not found (Object)"
+        Just t -> return t
 
 
 transpileFuncBodyDecl :: Abs.Type -> Abs.Item -> ControlGraphMonad (CEnv -> CEnv)
 transpileFuncBodyDecl t (Abs.NoInit _ (Abs.Ident varName)) = do
-    (envChange, varName) <- setType varName t
-    emit $ Assign varName (Constant 0)
+    (envChange, varName') <- setType varName t
+    emit $ Assign varName' (Constant 0)
     return envChange
 transpileFuncBodyDecl t (Abs.Init _ (Abs.Ident varName) expr) = do
     value <- transpileFuncBodyExpr expr
-    (envChange, varName) <- setType varName t
-    emit $ Assign varName value
+    (envChange, varName') <- setType varName t
+    emit $ Assign varName' value
     return envChange
 
 transpileAddOp :: Abs.AddOp -> BinaryOpType
@@ -339,8 +342,9 @@ transpileFuncBodyExpr (Abs.EString _ s) = do
     emit $ AssignString tmpName s
     return $ Object tmpName
 transpileFuncBodyExpr (Abs.EVar _ (Abs.Ident varName)) = do
-    varName' <- asks $ (Map.! varName) . cEnvVariablesValues
-    return $ Variable varName'
+    asks $ Map.lookup varName . cEnvVariablesValues >>= \case
+        Nothing -> error $ "Variable " ++ varName ++ " not found (transpileFuncBodyExpr EVar)"
+        Just varName' -> return $ Variable varName'
 transpileFuncBodyExpr (Abs.EAdd _ expr1 op expr2) = do
     value1 <- transpileFuncBodyExpr expr1
     value2 <- transpileFuncBodyExpr expr2

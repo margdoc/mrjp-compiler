@@ -92,6 +92,7 @@ instance Show Statement where
     show (Call varName functionLabel values) = varName ++ " = " ++ show functionLabel ++ "(" ++ intercalate ", " (map show values) ++ ")"
     show (Goto label) = "goto " ++ label
     show (Return value) = "return " ++ show value
+    show VReturn = "return"
 
 type Block = [Statement]
 
