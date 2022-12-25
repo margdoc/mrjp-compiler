@@ -11,7 +11,7 @@ import qualified Data.Map as Map
 import qualified Grammar.Abs as Abs
 
 import TypeCheckerTypes ( Type (..), GlobalTypes (..), FuncDef (..) )
-import IntermediateTypes ( Program, Label, ControlGraph (..), VarName, Block, Statement (..), Value (..), BinaryOpType (..), FunctionLabel (..) )
+import IntermediateTypes ( Program, Label, ControlGraph (..), VarName, Block, Statement (..), Value (..), BinaryOpType (..), UnaryOpType (..), FunctionLabel (..) )
 
 type IntermediateMonad = ExceptT String (ReaderT IEnv IO)
 
@@ -30,7 +30,7 @@ transpile (Abs.Program _ defs) = mapM transpileDef defs <&> Map.fromList
 
 transpileDef :: Abs.TopDef -> IntermediateMonad (Label, ControlGraph)
 transpileDef (Abs.TopFnDef _ (Abs.FnDef _ _ (Abs.Ident label) args body)) = do
-    let argTypes = Map.fromList $ map (\(Abs.Arg _ t (Abs.Ident argName)) -> (argName, evalType t)) args
+    let argTypes = map (\(Abs.Arg _ t (Abs.Ident argName)) -> (argName, evalType t)) args
     controlGraph <- runControlGraphMonad argTypes (transpileFuncBody body >> pushBlock >> return ())
     return (label, controlGraph)
 
@@ -70,12 +70,12 @@ data ControlGraphState = ControlGraphState
 instance Show ControlGraphState where
     show (ControlGraphState _ _ foldData' variablesTypes') = "ControlGraphState:\ndata: " ++ show foldData' ++ "\ntypes: " ++ show variablesTypes'
 
-initialControlGraphState :: Map.Map VarName Type -> ControlGraphState
+initialControlGraphState :: [(VarName, Type)] -> ControlGraphState
 initialControlGraphState argTypes = ControlGraphState
     { freshVarNames = map (\i -> "$t" ++ show i) [1 :: Int ..]
     , freshLabels = map show [1 :: Int ..]
-    , foldData = initialTranspileStmtFoldData $ Map.keys argTypes
-    , variablesTypes = argTypes
+    , foldData = initialTranspileStmtFoldData $ map fst argTypes
+    , variablesTypes = Map.fromList argTypes
     }
 
 data CEnv = CEnv
@@ -83,9 +83,9 @@ data CEnv = CEnv
     , cEnvGlobalTypes :: GlobalTypes
     }
 
-initialEnv :: Map.Map VarName Type -> GlobalTypes -> CEnv
+initialEnv :: [(VarName, Type)] -> GlobalTypes -> CEnv
 initialEnv argTypes types = CEnv
-    { cEnvVariablesValues = Map.fromList $ map (\(k, _) -> (k, k)) $ Map.toList argTypes
+    { cEnvVariablesValues = Map.fromList $ map (\(k, _) -> (k, k)) argTypes
     , cEnvGlobalTypes = types
     }
 
@@ -118,7 +118,7 @@ freshLabelsName = do
         else return $ head labelsNames
 
 
-runControlGraphMonad :: Map.Map VarName Type -> ControlGraphMonad () -> IntermediateMonad ControlGraph
+runControlGraphMonad :: [(VarName, Type)] -> ControlGraphMonad () -> IntermediateMonad ControlGraph
 runControlGraphMonad argTypes controlGraphMonad = do
     types <- asks iEnvTypes
     (err, state) <- liftIO $ runStateT (runReaderT (runExceptT controlGraphMonad) (initialEnv argTypes types)) $ initialControlGraphState argTypes
@@ -442,4 +442,18 @@ transpileFuncBodyExpr (Abs.EAnd _ expr1 expr2) = do
         emit $ Goto label3
 
     setLabel label3
+    return $ Variable tmpName
+transpileFuncBodyExpr (Abs.Neg _ expr) = do
+    value <- transpileFuncBodyExpr expr
+    tmpName <- freshTmpName
+    addNewVariable tmpName TInt
+
+    emit $ UnaryOp Neg tmpName value
+    return $ Variable tmpName
+transpileFuncBodyExpr (Abs.Not _ expr) = do
+    value <- transpileFuncBodyExpr expr
+    tmpName <- freshTmpName
+    addNewVariable tmpName TBool
+
+    emit $ UnaryOp Not tmpName value
     return $ Variable tmpName
