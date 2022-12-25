@@ -100,12 +100,14 @@ data ControlGraph = ControlGraph
     { graphData :: Map.Map Label Block
     , graphEdges :: Map.Map Label [Label]
     , graphEntry :: Label
+    , graphArgs :: [VarName]
     }
 
 instance Show ControlGraph where
-    show (ControlGraph graphData' graphEdges' graphEntry') =
+    show (ControlGraph graphData' graphEdges' graphEntry' args) =
         "ControlGraph:\nentry: " ++ graphEntry' ++
         "\nedges: " ++ show graphEdges' ++
+        "\nargs: " ++ show args ++
         "\ndata:\n" ++ unlines (map (\(label, block) -> "Label " ++ label ++ ":\n" ++ unlines (map (("  " ++) . show) block)) $ Map.assocs graphData')
 
 type Program = Map.Map Label ControlGraph

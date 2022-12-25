@@ -29,19 +29,21 @@ transpile (Abs.Program _ defs) = mapM transpileDef defs <&> Map.fromList
 
 
 transpileDef :: Abs.TopDef -> IntermediateMonad (Label, ControlGraph)
-transpileDef (Abs.TopFnDef _ (Abs.FnDef _ _ (Abs.Ident label) _ body)) = do
-    controlGraph <- runControlGraphMonad (transpileFuncBody body >> pushBlock >> return ())
+transpileDef (Abs.TopFnDef _ (Abs.FnDef _ _ (Abs.Ident label) args body)) = do
+    let argTypes = Map.fromList $ map (\(Abs.Arg _ t (Abs.Ident argName)) -> (argName, evalType t)) args
+    controlGraph <- runControlGraphMonad argTypes (transpileFuncBody body >> pushBlock >> return ())
     return (label, controlGraph)
 
 
 initialLabel :: Label
 initialLabel = "0"
 
-emptyGraph :: ControlGraph
-emptyGraph = ControlGraph
+emptyGraph :: [VarName] -> ControlGraph
+emptyGraph args = ControlGraph
     { graphData = Map.empty
     , graphEdges = Map.empty
     , graphEntry = initialLabel
+    , graphArgs = args
     }
 
 
@@ -51,11 +53,11 @@ data TranspileStmtFoldData = TranspileStmtFoldData
     , currentGraph :: ControlGraph
     } deriving (Show)
 
-initialTranspileStmtFoldData :: TranspileStmtFoldData
-initialTranspileStmtFoldData = TranspileStmtFoldData
+initialTranspileStmtFoldData :: [VarName] -> TranspileStmtFoldData
+initialTranspileStmtFoldData args = TranspileStmtFoldData
     { currentLabel = initialLabel
     , currentBlock = []
-    , currentGraph = emptyGraph
+    , currentGraph = emptyGraph args
     }
 
 data ControlGraphState = ControlGraphState
@@ -68,12 +70,12 @@ data ControlGraphState = ControlGraphState
 instance Show ControlGraphState where
     show (ControlGraphState _ _ foldData' variablesTypes') = "ControlGraphState:\ndata: " ++ show foldData' ++ "\ntypes: " ++ show variablesTypes'
 
-initialControlGraphState :: ControlGraphState
-initialControlGraphState = ControlGraphState
-    { freshVarNames = map (\i -> "t" ++ show i) [1 :: Int ..]
+initialControlGraphState :: Map.Map VarName Type -> ControlGraphState
+initialControlGraphState argTypes = ControlGraphState
+    { freshVarNames = map (\i -> "$t" ++ show i) [1 :: Int ..]
     , freshLabels = map show [1 :: Int ..]
-    , foldData = initialTranspileStmtFoldData
-    , variablesTypes = Map.empty
+    , foldData = initialTranspileStmtFoldData $ Map.keys argTypes
+    , variablesTypes = argTypes
     }
 
 data CEnv = CEnv
@@ -81,9 +83,9 @@ data CEnv = CEnv
     , cEnvGlobalTypes :: GlobalTypes
     }
 
-initialEnv :: GlobalTypes -> CEnv
-initialEnv types = CEnv
-    { cEnvVariablesValues = Map.empty
+initialEnv :: Map.Map VarName Type -> GlobalTypes -> CEnv
+initialEnv argTypes types = CEnv
+    { cEnvVariablesValues = Map.fromList $ map (\(k, _) -> (k, k)) $ Map.toList argTypes
     , cEnvGlobalTypes = types
     }
 
@@ -116,10 +118,10 @@ freshLabelsName = do
         else return $ head labelsNames
 
 
-runControlGraphMonad :: ControlGraphMonad () -> IntermediateMonad ControlGraph
-runControlGraphMonad controlGraphMonad = do
+runControlGraphMonad :: Map.Map VarName Type -> ControlGraphMonad () -> IntermediateMonad ControlGraph
+runControlGraphMonad argTypes controlGraphMonad = do
     types <- asks iEnvTypes
-    (err, state) <- liftIO $ runStateT (runReaderT (runExceptT controlGraphMonad) (initialEnv types)) initialControlGraphState
+    (err, state) <- liftIO $ runStateT (runReaderT (runExceptT controlGraphMonad) (initialEnv argTypes types)) $ initialControlGraphState argTypes
     case err of
         Left errString -> throwError errString
         Right _ -> do
@@ -163,12 +165,12 @@ newBlock label prog = do
 emit :: Statement -> ControlGraphMonad ()
 emit stmt = modifyFoldData (\s -> s { currentBlock = stmt : currentBlock s })
 
-evalType :: Abs.Type -> ControlGraphMonad Type
+evalType :: Abs.Type -> Type
 evalType = \case
-  Abs.Int _ -> return TInt
-  Abs.Bool _ -> return TBool
-  Abs.Str _ -> return TString
-  Abs.Void _ -> return TVoid
+  Abs.Int _ -> TInt
+  Abs.Bool _ -> TBool
+  Abs.Str _ -> TString
+  Abs.Void _ -> TVoid
   Abs.ClassType _ _ -> undefined
   -- Abs.Array _ (Abs.Array _ _) -> throwException TCMultiDimensionalArray
   Abs.Array _ _ -> undefined
@@ -276,7 +278,7 @@ addNewVariable varName t = modify (\s -> s { variablesTypes = Map.insert varName
 
 setType :: VarName -> Abs.Type -> ControlGraphMonad (CEnv -> CEnv, VarName)
 setType varName t = do
-    t' <- evalType t
+    let t' = evalType t
     cEnvVariablesValues' <- asks cEnvVariablesValues
     let newVarName = case Map.lookup varName cEnvVariablesValues' of
             Nothing -> varName

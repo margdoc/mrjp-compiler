@@ -1,5 +1,6 @@
 module AsmGenerator (generateAsmCode) where
 
+import Control.Monad (when)
 import Control.Monad.Identity (Identity (runIdentity))
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Reader (ReaderT (runReaderT))
@@ -7,7 +8,7 @@ import Control.Monad.State (StateT (runStateT), modify)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
-import IntermediateTypes (Program, ControlGraph (graphData), Label, Statement (..), Block, Value (..), BinaryOpType (..), FunctionLabel (..), UnaryOpType (..))
+import IntermediateTypes (Program, ControlGraph (..), Label, Statement (..), Block, Value (..), BinaryOpType (..), FunctionLabel (..), UnaryOpType (..), VarName)
 
 
 generateCmd :: String -> String
@@ -74,6 +75,9 @@ emitComment = emitAsmLine . Comment
 emitEmptyLine :: FunctionBodyGenerator ()
 emitEmptyLine = emitAsmLine EmptyLine
 
+argsRegisters :: [String]
+argsRegisters = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+
 
 generateAsmCode :: Program -> String
 generateAsmCode program = runFunctionBodyGenerator $ do
@@ -101,15 +105,18 @@ generateAsmCode program = runFunctionBodyGenerator $ do
             generateFunction label controlGraph = do
                 emitLabel label
                 generateFuncBody label controlGraph
+                emitCmd "leave"
+                emitCmd "ret"
             generateFuncBody :: Label -> ControlGraph -> FunctionBodyGenerator ()
             generateFuncBody funcName controlGraph = do
                 emitCmd "push rbp"
                 emitCmd "mov rbp, rsp"
-                emitCmd ("sub rsp, " ++ show (8 * allVariablesLength))
+                emitCmd $ "sub rsp, " ++ show (8 * allVariablesLength)
+                generateArgs $ graphArgs controlGraph
                 mapM_ (uncurry generateBlock) (Map.toAscList blocks)
                     where
                         blocks = graphData controlGraph
-                        allVariables = gatherAllVariables blocks
+                        allVariables = gatherAllVariables controlGraph
                         allVariablesLength = length allVariables
                         varIndices = Map.fromList $ zip allVariables [1..]
 
@@ -123,6 +130,23 @@ generateAsmCode program = runFunctionBodyGenerator $ do
 
                         varMemory :: String -> String
                         varMemory varName = "QWORD PTR [rbp-" ++ show (varIndex varName) ++ "]"
+
+                        generateArgs :: [VarName] -> FunctionBodyGenerator ()
+                        generateArgs = generateArgs' argsRegisters 0 . reverse
+                            where
+                                generateArgs' :: [String] -> Int -> [VarName] -> FunctionBodyGenerator ()
+                                generateArgs' _ _ [] = return ()
+                                generateArgs' (reg:regs) index (arg:args) = do
+                                    emitEmptyLine
+                                    emitComment $ "arg: " ++ arg
+                                    emitCmd $ "mov " ++ varMemory arg ++ ", " ++ reg
+                                    generateArgs' regs index args
+                                generateArgs' [] index (arg:args) = do
+                                    emitEmptyLine
+                                    emitComment $ "arg: " ++ arg
+                                    emitCmd $ "mov rax" ++ ", QWORD PTR [rbp+" ++ show (8 * (index + 1)) ++ "]"
+                                    emitCmd $ "mov " ++ varMemory arg ++ ", rax"
+                                    generateArgs' [] (index + 1) args
 
                         generateBlock :: Label -> Block -> FunctionBodyGenerator ()
                         generateBlock label block = do
@@ -160,13 +184,22 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                             generateStatement statement
                             emitEmptyLine
 
+                        alignStack :: Bool
+                        alignStack = allVariablesLength `mod` 2 == 1
+
+                        emitFunctionCall :: String -> FunctionBodyGenerator ()
+                        emitFunctionCall funcName = do
+                            when alignStack $ emitCmd "sub rsp, 8"
+                            emitCmd $ "call " ++ funcName
+                            when alignStack $ emitCmd "add rsp, 8"
+
                         generateStatement :: Statement -> FunctionBodyGenerator ()
                         generateStatement (Assign varName value) = do
                             emitCmd $ "mov rax, " ++ generateValue value
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (AssignString varName str) = do
                             emitCmd $ "lea rdi, [rip+" ++ generateStringLabel str ++ "]"
-                            emitCmd "call __copyString"
+                            emitFunctionCall "__copyString"
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (Return value) = do
                             emitCmd $ "mov rax, " ++ generateValue value
@@ -178,7 +211,7 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                         generateStatement (BinaryOp Concat varName value1 value2) = do
                             emitCmd $ "mov rdi, " ++ generateValue value1
                             emitCmd $ "mov rsi, " ++ generateValue value2
-                            emitCmd "call __concat"
+                            emitFunctionCall "__concat"
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (BinaryOp op varName value1 value2) | op `elem` [Add, Sub, Mul] = do
                             emitCmd $ "mov rax, " ++ generateValue value1
@@ -223,12 +256,12 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                         generateStatement (Call varName label values) = do
                             stackArguments <- generateFunctionArgs values
                             emitCmd $ "sub rsp, " ++ show (8 * stackArguments)
-                            emitCmd $ "call " ++ generateFunctionLabel label
+                            emitFunctionCall $ generateFunctionLabel label
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                             emitCmd $ "add rsp, " ++ show (8 * stackArguments)
 
                         generateFunctionArgs :: [Value] -> FunctionBodyGenerator Int
-                        generateFunctionArgs = generateFunctionArgs' ["rdi", "rsi", "rdx", "rcx", "r8", "r9"] 0
+                        generateFunctionArgs = generateFunctionArgs' argsRegisters 0
                             where
                                 generateFunctionArgs' :: [String] -> Int -> [Value] -> FunctionBodyGenerator Int
                                 generateFunctionArgs' _ i [] = return i
@@ -251,8 +284,8 @@ gatherAllStrings = foldr gatherAllStrings' Set.empty . Map.elems
         gatherAllStrings''' (AssignString _ str) = Set.insert str
         gatherAllStrings''' _ = id
 
-gatherAllVariables :: Map.Map Label Block -> [String]
-gatherAllVariables blocks = Set.toList $ foldr (flip $ foldr gatherVariables) Set.empty $ Map.elems blocks
+gatherAllVariables :: ControlGraph -> [String]
+gatherAllVariables graph = Set.toList $ foldr (flip $ foldr gatherVariables) (Set.fromList $ graphArgs graph) $ Map.elems $ graphData graph
     where
         gatherVariables :: Statement -> Set.Set String -> Set.Set String
         gatherVariables (Assign varName _) = Set.insert varName
