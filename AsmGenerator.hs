@@ -1,6 +1,5 @@
 module AsmGenerator (generateAsmCode) where
 
-import Control.Monad (when)
 import Control.Monad.Identity (Identity (runIdentity))
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Reader (ReaderT (runReaderT))
@@ -99,7 +98,9 @@ generateAsmCode program = runFunctionBodyGenerator $ do
             generateStringLiteral :: String -> Int -> FunctionBodyGenerator ()
             generateStringLiteral str index = do
                 emitLabel (".LC" ++ show index)
-                emitCmd $ ".string " ++ "\"" ++ str ++ "\\0" ++ "\""
+                emitCmd $ ".string " ++ "\"" ++ escapedString ++ "\\0" ++ "\""
+                    where
+                        escapedString = reverse $ drop 1 $ reverse $ drop 1 $ show str
 
             generateFunction :: Label -> ControlGraph -> FunctionBodyGenerator ()
             generateFunction label controlGraph = do
@@ -136,17 +137,17 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                             where
                                 generateArgs' :: [String] -> Int -> [VarName] -> FunctionBodyGenerator ()
                                 generateArgs' _ _ [] = return ()
-                                generateArgs' (reg:regs) index (arg:args) = do
+                                generateArgs' (reg:regs) index (arg:as) = do
                                     emitEmptyLine
                                     emitComment $ "arg: " ++ arg
                                     emitCmd $ "mov " ++ varMemory arg ++ ", " ++ reg
-                                    generateArgs' regs index args
-                                generateArgs' [] index (arg:args) = do
+                                    generateArgs' regs index as
+                                generateArgs' [] index (arg:as) = do
                                     emitEmptyLine
                                     emitComment $ "arg: " ++ arg
                                     emitCmd $ "mov rax" ++ ", QWORD PTR [rbp+" ++ show (8 * index) ++ "]"
                                     emitCmd $ "mov " ++ varMemory arg ++ ", rax"
-                                    generateArgs' [] (index - 1) args
+                                    generateArgs' [] (index - 1) as
 
                         generateBlock :: Label -> Block -> FunctionBodyGenerator ()
                         generateBlock label block = do
@@ -190,7 +191,7 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (AssignString varName str) = do
                             emitCmd $ "lea rdi, [rip+" ++ generateStringLabel str ++ "]"
-                            emitCmd "call __copyString"
+                            emitFunctionCall "__copyString" 1
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (Return value) = do
                             emitCmd $ "mov rax, " ++ generateValue value
@@ -202,7 +203,7 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                         generateStatement (BinaryOp Concat varName value1 value2) = do
                             emitCmd $ "mov rdi, " ++ generateValue value1
                             emitCmd $ "mov rsi, " ++ generateValue value2
-                            emitCmd "call __concat"
+                            emitFunctionCall "__concat" 2
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (BinaryOp op varName value1 value2) | op `elem` [Add, Sub, Mul] = do
                             emitCmd $ "mov rax, " ++ generateValue value1
@@ -245,27 +246,36 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                             emitCmd $ "je " ++ generateJmpLabel label2
                             emitCmd $ "jmp " ++ generateJmpLabel label1
                         generateStatement (Call varName label values) = do
-                            stackArguments <- generateFunctionArgs alignStack values
-                            emitCmd $ "sub rsp, " ++ show (8 * stackArguments)
-                            emitCmd $ "call " ++ generateFunctionLabel label
+                            generateFunctionArgs values
+                            emitFunctionCall (generateFunctionLabel label) (max (length values - length argsRegisters) 0 + stackAligment)
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
-                            emitCmd $ "add rsp, " ++ show (8 * stackArguments)
                                 where
                                     alignStack :: Bool
                                     alignStack = (allVariablesLength + length values) `mod` 2 == 1
 
-                        generateFunctionArgs :: Bool -> [Value] -> FunctionBodyGenerator Int
-                        generateFunctionArgs alignStack = generateFunctionArgs' argsRegisters (0)
-                            where
-                                generateFunctionArgs' :: [String] -> Int -> [Value] -> FunctionBodyGenerator Int
-                                generateFunctionArgs' _ i [] = return i
-                                generateFunctionArgs' [] i (value:values) = do
-                                    emitCmd ("mov rax, " ++ generateValue value)
-                                    emitCmd ("mov QWORD PTR [rbp-" ++ show (8 * (i + 1 + allVariablesLength)) ++ "], rax")
-                                    generateFunctionArgs' [] (i + 1) values
-                                generateFunctionArgs' (reg:regs) i (value:values) = do
-                                    emitCmd ("mov " ++ reg ++ ", " ++ generateValue value)
-                                    generateFunctionArgs' regs i values
+                                    stackAligment :: Int
+                                    stackAligment = if alignStack then 1 else 0
+
+                                    generateFunctionArgs :: [Value] -> FunctionBodyGenerator ()
+                                    generateFunctionArgs = generateFunctionArgs' argsRegisters (allVariablesLength + 1 + stackAligment)
+                                        where
+                                            generateFunctionArgs' :: [String] -> Int -> [Value] -> FunctionBodyGenerator ()
+                                            generateFunctionArgs' _ _ [] = return ()
+                                            generateFunctionArgs' [] i (value:vs) = do
+                                                emitCmd ("mov rax, " ++ generateValue value)
+                                                emitCmd ("mov QWORD PTR [rbp-" ++ show (8 * i) ++ "], rax")
+                                                generateFunctionArgs' [] (i + 1) vs
+                                            generateFunctionArgs' (reg:regs) i (value:vs) = do
+                                                emitCmd ("mov " ++ reg ++ ", " ++ generateValue value)
+                                                generateFunctionArgs' regs i vs
+
+                        emitFunctionCall :: String -> Int -> FunctionBodyGenerator ()
+                        emitFunctionCall label argsNumber = do
+                            emitCmd $ "sub rsp, " ++ show (8 * argsNumber)
+                            emitCmd $ "call " ++ label
+                            emitCmd $ "add rsp, " ++ show (8 * argsNumber)
+
+
 
 gatherAllStrings :: Program -> Set.Set String
 gatherAllStrings = foldr gatherAllStrings' Set.empty . Map.elems
