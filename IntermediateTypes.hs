@@ -79,6 +79,8 @@ data Statement = BinaryOp BinaryOpType VarName Value Value
                | Goto Label
                | Return Value
                | VReturn
+               | AddRef VarName
+               | RemoveRef VarName
 
 instance Show Statement where
     show (BinaryOp op varName value1 value2) = varName ++ " = " ++ show value1 ++ " " ++ show op ++ " " ++ show value2
@@ -93,6 +95,8 @@ instance Show Statement where
     show (Goto label) = "goto " ++ label
     show (Return value) = "return " ++ show value
     show VReturn = "return"
+    show (AddRef varName) = "++" ++ varName
+    show (RemoveRef varName) = "--" ++ varName
 
 type Block = [Statement]
 

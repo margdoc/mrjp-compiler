@@ -1,5 +1,6 @@
 module AsmGenerator (generateAsmCode) where
 
+import Control.Monad (when)
 import Control.Monad.Identity (Identity (runIdentity))
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Reader (ReaderT (runReaderT))
@@ -245,6 +246,12 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                             emitCmd "cmp rax, 0"
                             emitCmd $ "je " ++ generateJmpLabel label2
                             emitCmd $ "jmp " ++ generateJmpLabel label1
+                        generateStatement (AddRef varName) = do
+                            emitCmd $ "mov rdi, " ++ varMemory varName
+                            emitFunctionCall "__addRef" 1
+                        generateStatement (RemoveRef varName) = do
+                            emitCmd $ "mov rdi, " ++ varMemory varName
+                            emitFunctionCall "__removeRef" 1
                         generateStatement (Call varName label values) = do
                             generateFunctionArgs values
                             emitFunctionCall (generateFunctionLabel label) (max (length values - length argsRegisters) 0 + stackAligment)
@@ -271,9 +278,9 @@ generateAsmCode program = runFunctionBodyGenerator $ do
 
                         emitFunctionCall :: String -> Int -> FunctionBodyGenerator ()
                         emitFunctionCall label argsNumber = do
-                            emitCmd $ "sub rsp, " ++ show (8 * argsNumber)
+                            when (argsNumber /= 0) $ emitCmd $ "sub rsp, " ++ show (8 * argsNumber)
                             emitCmd $ "call " ++ label
-                            emitCmd $ "add rsp, " ++ show (8 * argsNumber)
+                            when (argsNumber /= 0) $ emitCmd $ "add rsp, " ++ show (8 * argsNumber)
 
 
 

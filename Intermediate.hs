@@ -3,7 +3,7 @@ module Intermediate ( transpile, runIntermediateMonad ) where
 
 import Control.Monad (when)
 import Control.Monad.Except (ExceptT, MonadError (throwError), runExceptT, MonadIO (liftIO))
-import Control.Monad.Reader (ReaderT (runReaderT), MonadReader (local), asks)
+import Control.Monad.Reader (ReaderT (runReaderT), MonadReader (local, ask), asks)
 import Control.Monad.State (StateT (runStateT), gets, modify)
 import Data.Functor ((<&>))
 import qualified Data.Map as Map
@@ -65,10 +65,11 @@ data ControlGraphState = ControlGraphState
     , freshLabels :: [Label]
     , foldData :: TranspileStmtFoldData
     , variablesTypes :: Map.Map VarName Type
+    , destructList :: [VarName]
     }
 
 instance Show ControlGraphState where
-    show (ControlGraphState _ _ foldData' variablesTypes') = "ControlGraphState:\ndata: " ++ show foldData' ++ "\ntypes: " ++ show variablesTypes'
+    show (ControlGraphState _ _ foldData' variablesTypes' _) = "ControlGraphState:\ndata: " ++ show foldData' ++ "\ntypes: " ++ show variablesTypes'
 
 initialControlGraphState :: [(VarName, Type)] -> ControlGraphState
 initialControlGraphState argTypes = ControlGraphState
@@ -76,17 +77,22 @@ initialControlGraphState argTypes = ControlGraphState
     , freshLabels = map show [1 :: Int ..]
     , foldData = initialTranspileStmtFoldData $ map fst argTypes
     , variablesTypes = Map.fromList argTypes
+    , destructList = []
     }
 
 data CEnv = CEnv
     { cEnvVariablesValues :: Map.Map VarName VarName
     , cEnvGlobalTypes :: GlobalTypes
+    , cEnvAliveObjects :: [VarName]
+    , cEnvBlockObjects :: [VarName]
     }
 
 initialEnv :: [(VarName, Type)] -> GlobalTypes -> CEnv
 initialEnv argTypes types = CEnv
     { cEnvVariablesValues = Map.fromList $ map (\(k, _) -> (k, k)) argTypes
     , cEnvGlobalTypes = types
+    , cEnvAliveObjects = []
+    , cEnvBlockObjects = []
     }
 
 type ControlGraphMonad = ExceptT String (ReaderT CEnv (StateT ControlGraphState IO))
@@ -182,24 +188,50 @@ foldWithEnv f (x : xs) = do
     envChange <- f x
     local envChange $ foldWithEnv f xs <&> (. envChange)
 
+emitOnReturnDestruct :: ControlGraphMonad ()
+emitOnReturnDestruct = do
+    env <- ask
+    mapM_ (emit . RemoveRef) $ cEnvBlockObjects env
+    mapM_ (emit . RemoveRef) $ cEnvAliveObjects env
+
+addToDestruct :: VarName -> ControlGraphMonad ()
+addToDestruct varName = modify (\s -> s { destructList = varName : destructList s })
+
+emitDestruct :: ControlGraphMonad ()
+emitDestruct = do
+    gets destructList >>= mapM_ (emit . RemoveRef)
+    modify (\s -> s { destructList = [] })
+
 transpileFuncBody :: Abs.Block -> ControlGraphMonad ()
 transpileFuncBody (Abs.Block _ stmts) = do
-    _ <- foldWithEnv transpileFuncBodyStmt stmts
-    return ()
+    local (\env -> env { cEnvBlockObjects = [], cEnvAliveObjects = cEnvBlockObjects env ++ cEnvAliveObjects env }) $ do
+        envChange <- foldWithEnv transpileFuncBodyStmt stmts
+        local envChange $ asks cEnvBlockObjects >>= mapM_ (emit . RemoveRef)
+        return ()
 
 transpileFuncBodyStmt :: Abs.Stmt -> ControlGraphMonad (CEnv -> CEnv)
-transpileFuncBodyStmt (Abs.SExp _ expr) = transpileFuncBodyExpr expr >> return id
-transpileFuncBodyStmt (Abs.Decl _ t decls) =
+transpileFuncBodyStmt stmt = do
+    e <- transpileFuncBodyStmt' stmt
+    emitDestruct
+    return e
+
+transpileFuncBodyStmt' :: Abs.Stmt -> ControlGraphMonad (CEnv -> CEnv)
+transpileFuncBodyStmt' (Abs.SExp _ expr) = transpileFuncBodyExpr expr >> return id
+transpileFuncBodyStmt' (Abs.Decl _ t decls) =
     foldWithEnv (transpileFuncBodyDecl t) decls
-transpileFuncBodyStmt (Abs.Ret _ expr) = do
+transpileFuncBodyStmt' (Abs.Ret _ expr) = do
     value <- transpileFuncBodyExpr expr
+    emitAddRefIfObject value
+    emitOnReturnDestruct
     emit $ Return value
     return id
-transpileFuncBodyStmt (Abs.VRet _) = do
+transpileFuncBodyStmt' (Abs.VRet _) = do
+    emitOnReturnDestruct
     emit VReturn
     return id
-transpileFuncBodyStmt (Abs.BStmt _ block) = transpileFuncBody block >> return id
-transpileFuncBodyStmt (Abs.Cond _ expr stmt) = do
+transpileFuncBodyStmt' (Abs.Empty _) = return id
+transpileFuncBodyStmt' (Abs.BStmt _ block) = transpileFuncBody block >> return id
+transpileFuncBodyStmt' (Abs.Cond _ expr stmt) = do
     value <- transpileFuncBodyExpr expr
     label1 <- freshLabelsName
     label2 <- freshLabelsName
@@ -213,7 +245,7 @@ transpileFuncBodyStmt (Abs.Cond _ expr stmt) = do
 
     setLabel label2
     return id
-transpileFuncBodyStmt (Abs.CondElse _ expr stmt1 stmt2) = do
+transpileFuncBodyStmt' (Abs.CondElse _ expr stmt1 stmt2) = do
     value <- transpileFuncBodyExpr expr
     label1 <- freshLabelsName
     label2 <- freshLabelsName
@@ -232,7 +264,7 @@ transpileFuncBodyStmt (Abs.CondElse _ expr stmt1 stmt2) = do
 
     setLabel label3
     return id
-transpileFuncBodyStmt (Abs.While _ expr stmt) = do
+transpileFuncBodyStmt' (Abs.While _ expr stmt) = do
     label1 <- freshLabelsName
     label2 <- freshLabelsName
     label3 <- freshLabelsName
@@ -250,26 +282,30 @@ transpileFuncBodyStmt (Abs.While _ expr stmt) = do
 
     setLabel label3
     return id
-transpileFuncBodyStmt (Abs.Incr _ (Abs.LValue _ expr)) = do
+transpileFuncBodyStmt' (Abs.Incr _ (Abs.LValue _ expr)) = do
     (varName, value) <- transpileFuncBodyExpr expr <&> \case
         value@(Variable varName) -> (varName, value)
         _ -> error "Incr: not a variable"
 
     emit $ BinaryOp Add varName value (Constant 1)
     return id
-transpileFuncBodyStmt (Abs.Decr _ (Abs.LValue _ expr)) = do
+transpileFuncBodyStmt' (Abs.Decr _ (Abs.LValue _ expr)) = do
     (varName, value) <- transpileFuncBodyExpr expr <&> \case
         value@(Variable varName) -> (varName, value)
         _ -> error "Decr: not a variable"
 
     emit $ BinaryOp Sub varName value (Constant 1)
     return id
-transpileFuncBodyStmt (Abs.Ass _ (Abs.LValue _ expr1) expr2) = do
-    varName <- transpileFuncBodyExpr expr1 <&> \case
-        Variable varName -> varName
+transpileFuncBodyStmt' (Abs.Ass _ (Abs.LValue _ expr1) expr2) = do
+    value <- transpileFuncBodyExpr expr2
+    emitAddRefIfObject value
+
+    (varName, isLValueObject) <- transpileFuncBodyExpr expr1 <&> \case
+        Variable varName -> (varName, False)
+        Object varName -> (varName, True)
         _ -> error "Ass: not a variable"
 
-    value <- transpileFuncBodyExpr expr2
+    when isLValueObject $ emit $ RemoveRef varName
     emit $ Assign varName value
     return id
 
@@ -302,16 +338,32 @@ getTypeFromValue (Object varName) = do
         Just t -> return t
 
 
-transpileFuncBodyDecl :: Abs.Type -> Abs.Item -> ControlGraphMonad (CEnv -> CEnv)
-transpileFuncBodyDecl t (Abs.NoInit _ (Abs.Ident varName)) = do
-    (envChange, varName') <- setType varName t
-    emit $ Assign varName' (Constant 0)
-    return envChange
-transpileFuncBodyDecl t (Abs.Init _ (Abs.Ident varName) expr) = do
-    value <- transpileFuncBodyExpr expr
+isObject :: Type -> Bool
+isObject TString = True
+isObject _ = False
+
+
+emitAddRefIfObject :: Value -> ControlGraphMonad ()
+emitAddRefIfObject = \case
+    Object varName -> emit $ AddRef varName
+    _ -> return ()
+
+
+transpileDecl :: Abs.Type -> VarName -> Value -> ControlGraphMonad (CEnv -> CEnv)
+transpileDecl t varName value = do
     (envChange, varName') <- setType varName t
     emit $ Assign varName' value
-    return envChange
+    if isObject $ evalType t
+        then do
+            emit $ AddRef varName'
+            return $ envChange . (\env -> env { cEnvBlockObjects =  varName' : cEnvBlockObjects env})
+        else
+            return envChange
+
+transpileFuncBodyDecl :: Abs.Type -> Abs.Item -> ControlGraphMonad (CEnv -> CEnv)
+transpileFuncBodyDecl t (Abs.NoInit _ (Abs.Ident varName)) = transpileDecl t varName (Constant 0)
+transpileFuncBodyDecl t (Abs.Init _ (Abs.Ident varName) expr) = transpileFuncBodyExpr expr >>= transpileDecl t varName
+
 
 transpileAddOp :: Abs.AddOp -> BinaryOpType
 transpileAddOp = \case
@@ -344,9 +396,9 @@ transpileFuncBodyExpr (Abs.EString _ s) = do
     emit $ AssignString tmpName s
     return $ Object tmpName
 transpileFuncBodyExpr (Abs.EVar _ (Abs.Ident varName)) = do
-    asks $ Map.lookup varName . cEnvVariablesValues >>= \case
-        Nothing -> error $ "Variable " ++ varName ++ " not found (transpileFuncBodyExpr EVar)"
-        Just varName' -> return $ Variable varName'
+    gets (Map.lookup varName . variablesTypes) >>= \case
+        Nothing -> error $ "Variable " ++ varName ++ " not found"
+        Just t -> return $ if isObject t then Object varName else Variable varName
 transpileFuncBodyExpr (Abs.EAdd _ expr1 op expr2) = do
     value1 <- transpileFuncBodyExpr expr1
     value2 <- transpileFuncBodyExpr expr2
@@ -391,7 +443,14 @@ transpileFuncBodyExpr (Abs.EApp _ (Abs.Ident funcName) exprs) = do
     funcReturnType' <- asks $ funcReturnType . (Map.! funcName) . globalFunctions . cEnvGlobalTypes
     addNewVariable tmpName funcReturnType'
 
+    mapM_ (\case
+        Object varName -> do
+            emit $ AddRef varName
+            addToDestruct varName
+        _ -> return ()) values
     emit $ Call tmpName (FunctionLabel funcName) values
+    when (isObject funcReturnType') $ addToDestruct tmpName
+
     return $ case funcReturnType' of
         TString -> Object tmpName
         _ -> Variable tmpName
