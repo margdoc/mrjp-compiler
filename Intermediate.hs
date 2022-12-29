@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 module Intermediate ( transpile, runIntermediateMonad ) where
 
-import Control.Monad (when)
+import Control.Monad (when, void)
 import Control.Monad.Except (ExceptT, MonadError (throwError), runExceptT, MonadIO (liftIO))
 import Control.Monad.Reader (ReaderT (runReaderT), MonadReader (local, ask), asks)
 import Control.Monad.State (StateT (runStateT), gets, modify)
@@ -31,7 +31,15 @@ transpile (Abs.Program _ defs) = mapM transpileDef defs <&> Map.fromList
 transpileDef :: Abs.TopDef -> IntermediateMonad (Label, ControlGraph)
 transpileDef (Abs.TopFnDef _ (Abs.FnDef _ _ (Abs.Ident label) args body)) = do
     let argTypes = map (\(Abs.Arg _ t (Abs.Ident argName)) -> (argName, evalType t)) args
-    controlGraph <- runControlGraphMonad argTypes (transpileFuncBody body >> pushBlock >> return ())
+    controlGraph <- runControlGraphMonad argTypes $ do
+        transpileFuncBody body
+
+        -- if there is no return statement, emit return at the end of function
+        emitOnReturnDestruct
+        emit VReturn
+
+        pushBlock
+        return ()
     return (label, controlGraph)
 
 
@@ -179,7 +187,7 @@ evalType = \case
   Abs.Void _ -> TVoid
   Abs.ClassType _ _ -> undefined
   -- Abs.Array _ (Abs.Array _ _) -> throwException TCMultiDimensionalArray
-  Abs.Array _ _ -> undefined
+  Abs.Array _ t -> TArray $ evalType t
 
 
 foldWithEnv :: (a -> ControlGraphMonad (CEnv -> CEnv)) -> [a] -> ControlGraphMonad (CEnv -> CEnv)
@@ -214,6 +222,25 @@ transpileFuncBodyStmt stmt = do
     e <- transpileFuncBodyStmt' stmt
     emitDestruct
     return e
+
+emitWhileLoop :: ControlGraphMonad Value -> ControlGraphMonad () -> ControlGraphMonad ()
+emitWhileLoop cond body = do
+    label1 <- freshLabelsName
+    label2 <- freshLabelsName
+    label3 <- freshLabelsName
+
+    currentLabel' <- gets $ currentLabel . foldData
+    addEdges [(currentLabel', [label1]), (label1, [label2, label3]), (label2, [label1])]
+
+    newBlock label1 $ do
+        value <- cond
+        emit $ If value label2 label3
+
+    newBlock label2 $ do
+        body
+        emit $ Goto label1
+
+    setLabel label3
 
 transpileFuncBodyStmt' :: Abs.Stmt -> ControlGraphMonad (CEnv -> CEnv)
 transpileFuncBodyStmt' (Abs.SExp _ expr) = transpileFuncBodyExpr expr >> return id
@@ -265,22 +292,7 @@ transpileFuncBodyStmt' (Abs.CondElse _ expr stmt1 stmt2) = do
     setLabel label3
     return id
 transpileFuncBodyStmt' (Abs.While _ expr stmt) = do
-    label1 <- freshLabelsName
-    label2 <- freshLabelsName
-    label3 <- freshLabelsName
-
-    currentLabel' <- gets $ currentLabel . foldData
-    addEdges [(currentLabel', [label1]), (label1, [label2, label3]), (label2, [label1])]
-
-    newBlock label1 $ do
-        value <- transpileFuncBodyExpr expr
-        emit $ If value label2 label3
-
-    newBlock label2 $ do
-        _ <- transpileFuncBodyStmt stmt
-        emit $ Goto label1
-
-    setLabel label3
+    emitWhileLoop (transpileFuncBodyExpr expr) (void $ transpileFuncBodyStmt stmt)
     return id
 transpileFuncBodyStmt' (Abs.Incr _ (Abs.LValue _ expr)) = do
     (varName, value) <- transpileFuncBodyExpr expr <&> \case
@@ -296,18 +308,57 @@ transpileFuncBodyStmt' (Abs.Decr _ (Abs.LValue _ expr)) = do
 
     emit $ BinaryOp Sub varName value (Constant 1)
     return id
-transpileFuncBodyStmt' (Abs.Ass _ (Abs.LValue _ expr1) expr2) = do
+transpileFuncBodyStmt' (Abs.Ass _ lvalue expr2) = do
     value <- transpileFuncBodyExpr expr2
-    emitAddRefIfObject value
+    isObject' <- case value of
+            Object varName -> do
+                emit $ AddRef varName
+                return True
+            _ -> return False
+    transpiledLValue <- transpileLValue lvalue
 
-    (varName, isLValueObject) <- transpileFuncBodyExpr expr1 <&> \case
-        Variable varName -> (varName, False)
-        Object varName -> (varName, True)
-        _ -> error "Ass: not a variable"
+    let varName = case transpiledLValue of
+            LValue varName -> varName
+            LValueArrayElem value1 _ -> case value1 of
+                Variable varName -> varName
+                Object varName -> varName
+                _ -> error "LValueArrayElem: not a variable"
 
-    when isLValueObject $ emit $ RemoveRef varName
-    emit $ Assign varName value
+    when isObject' $ emit $ RemoveRef varName
+    case transpiledLValue of
+        LValue varName -> do
+            emit $ Assign varName value
+        LValueArrayElem value1 value2 ->
+            emit $ Store value1 value2 value
     return id
+transpileFuncBodyStmt' (Abs.ForLoop _ t' (Abs.Ident varName) (Abs.Ident array) expr) = do
+    iteratorVar <- freshTmpName
+    addNewVariable iteratorVar TInt
+    arrayLength <- freshTmpName
+    addNewVariable arrayLength TInt
+    comparisonVar <- freshTmpName
+    addNewVariable arrayLength TBool
+
+    let t = evalType t'
+    tmpVar <- freshTmpName
+    addNewVariable tmpVar t
+
+    emit $ Assign iteratorVar (Constant 0)
+    emit $ ArrayLength arrayLength (Object array)
+
+    let cond = do
+            emit $ BinaryOp Less comparisonVar (Variable iteratorVar) (Variable arrayLength)
+            return $ Variable comparisonVar
+        body = do
+            emit $ Load tmpVar (Object array) (Variable iteratorVar)
+            envChange <- transpileDecl t' varName (Variable tmpVar)
+            local envChange $ do
+                transpileFuncBodyStmt expr
+                emit $ BinaryOp Add iteratorVar (Variable iteratorVar) (Constant 1)
+
+    emitWhileLoop cond body
+    return id
+
 
 addNewVariable :: VarName -> Type -> ControlGraphMonad ()
 addNewVariable varName t = modify (\s -> s { variablesTypes = Map.insert varName t (variablesTypes s) })
@@ -340,6 +391,7 @@ getTypeFromValue (Object varName) = do
 
 isObject :: Type -> Bool
 isObject TString = True
+isObject (TArray _) = True
 isObject _ = False
 
 
@@ -384,6 +436,23 @@ transpileRelOp = \case
     Abs.GE _ -> GreaterEqual
     Abs.EQU _ -> Equal
     Abs.NE _ -> NotEqual
+
+createValue :: VarName -> Type -> ControlGraphMonad Value
+createValue varName t =
+    gets (Map.lookup varName . variablesTypes) >>= \case
+        Nothing -> error $ "Variable " ++ varName ++ " not found"
+        Just t -> return $ if isObject t then Object varName else Variable varName
+
+data LValue = LValue VarName
+            | LValueArrayElem Value Value
+
+transpileLValue :: Abs.LValue -> ControlGraphMonad LValue
+transpileLValue (Abs.LValue _ (Abs.EVar _ (Abs.Ident varName))) = return $ LValue varName
+transpileLValue (Abs.LValue _ (Abs.EArrayElem _ expr1 expr2)) = do
+    value1 <- transpileFuncBodyExpr expr1
+    value2 <- transpileFuncBodyExpr expr2
+    return $ LValueArrayElem value1 value2
+
 
 transpileFuncBodyExpr :: Abs.Expr -> ControlGraphMonad Value
 transpileFuncBodyExpr (Abs.ELitInt _ i) = return $ Constant $ fromInteger i
@@ -451,9 +520,7 @@ transpileFuncBodyExpr (Abs.EApp _ (Abs.Ident funcName) exprs) = do
     emit $ Call tmpName (FunctionLabel funcName) values
     when (isObject funcReturnType') $ addToDestruct tmpName
 
-    return $ case funcReturnType' of
-        TString -> Object tmpName
-        _ -> Variable tmpName
+    return $ if isObject funcReturnType' then Object tmpName else Variable tmpName
 transpileFuncBodyExpr (Abs.EOr _ expr1 expr2) = do
     value1 <- transpileFuncBodyExpr expr1
     label1 <- freshLabelsName
@@ -516,3 +583,34 @@ transpileFuncBodyExpr (Abs.Not _ expr) = do
 
     emit $ UnaryOp Not tmpName value
     return $ Variable tmpName
+transpileFuncBodyExpr (Abs.EAlloc _ t expr) = do
+    value <- transpileFuncBodyExpr expr
+    tmpName <- freshTmpName
+    addNewVariable tmpName (TArray $ evalType t)
+
+    emit $ AllocArray tmpName value
+    return $ Object tmpName
+transpileFuncBodyExpr (Abs.EArrayElem _ expr1 expr2) = do
+    array <- transpileFuncBodyExpr expr1
+    value <- transpileFuncBodyExpr expr2
+
+    t <- getTypeFromValue array >>= \case
+        TArray t' -> return t'
+        _ -> error "transpileFuncBodyExpr(Abs.EArrayElem): Array expected"
+
+    tmpName <- freshTmpName
+    addNewVariable tmpName t
+
+    emit $ Load tmpName array value
+    createValue tmpName t
+transpileFuncBodyExpr (Abs.EAttr _ expr1 (Abs.Ident attr)) = do
+    object <- transpileFuncBodyExpr expr1
+
+    case attr of
+        "length" -> do
+            tmpName <- freshTmpName
+            addNewVariable tmpName TInt
+
+            emit $ ArrayLength tmpName object
+            return $ Variable tmpName
+        _ -> undefined --TODO: attributes

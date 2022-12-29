@@ -72,7 +72,9 @@ data Statement = BinaryOp BinaryOpType VarName Value Value
                | Phi VarName [(Value, Label)]
                | If Value Label Label
                | Load VarName Value Value     -- value1 = value2[value3]
-               | Store VarName Value Value    -- value1[value2] = value3
+               | Store Value Value Value    -- value1[value2] = value3
+               | ArrayLength VarName Value
+               | AllocArray VarName Value
                | Assign VarName Value
                | AssignString VarName String
                | Call VarName FunctionLabel [Value]   -- function_label arguments...
@@ -88,7 +90,9 @@ instance Show Statement where
     show (Phi varName values) = varName ++ " = phi " ++ show values
     show (If value label1 label2) = "if " ++ show value ++ " goto " ++ label1 ++ " else goto " ++ label2
     show (Load varName value1 value2) = varName ++ " = " ++ show value1 ++ "[" ++ show value2 ++ "]"
-    show (Store varName value1 value2) = show varName ++ "[" ++ show value1 ++ "] = " ++ show value2
+    show (Store value1 value2 value3) = show value1 ++ "[" ++ show value2 ++ "] = " ++ show value3
+    show (ArrayLength varName value) = varName ++ " = " ++ show value ++ ".length"
+    show (AllocArray varName value) = varName ++ " = new[" ++ show value ++ "]"
     show (Assign varName value) = varName ++ " = " ++ show value
     show (AssignString varName string) = varName ++ " = " ++ show string
     show (Call varName functionLabel values) = varName ++ " = " ++ show functionLabel ++ "(" ++ intercalate ", " (map show values) ++ ")"

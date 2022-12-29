@@ -82,3 +82,45 @@ char* __copyString(char* s) {
     strcpy(t, s);
     return t;
 }
+
+void* __allocArray(long length) {
+    void *p = __alloc(8 * length + sizeof(counterType));
+    memset(p + sizeof(counterType), 0, 8 * length);
+    *(counterType*)p = length;
+    return p ;
+}
+
+long __loadArray(void* p, long index) {
+    if (p == NULL) {
+        puts("null pointer");
+        exit(1);
+    }
+
+    counterType length = *(counterType*)p;
+    if (index < 0 || index >= length) {
+        debug("load array: %p, %ld\n", p, index);
+        puts("array index out of bounds");
+        exit(1);
+    }
+
+    debug("load array: %p, %ld, %ld\n", p, index, *((long*)(p + 8 + 8 * index)));
+
+    return *((long*)(p + 8 + 8 * index));
+}
+
+void __storeArray(void* p, long index, long value) {
+    if (p == NULL) {
+        puts("null pointer");
+        exit(1);
+    }
+
+    counterType length = *(counterType*)p;
+    if (index < 0 || index >= length) {
+        debug("store array: %p, %ld\n", p, index);
+        puts("array index out of bounds");
+        exit(1);
+    }
+
+    debug("store array: %p, %ld, %ld\n", p, index, value);
+    *((long*)(p + 8 + 8 * index)) = value;
+}

@@ -79,6 +79,14 @@ argsRegisters :: [String]
 argsRegisters = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
 
 
+assert :: Bool -> String -> FunctionBodyGenerator ()
+assert True _ = return ()
+assert False err = error err
+
+isObject :: Value -> Bool
+isObject (Object _) = True
+isObject _ = False
+
 generateAsmCode :: Program -> String
 generateAsmCode program = runFunctionBodyGenerator $ do
     emitCmd ".intel_syntax noprefix"
@@ -107,8 +115,6 @@ generateAsmCode program = runFunctionBodyGenerator $ do
             generateFunction label controlGraph = do
                 emitLabel label
                 generateFuncBody label controlGraph
-                emitCmd "leave"
-                emitCmd "ret"
             generateFuncBody :: Label -> ControlGraph -> FunctionBodyGenerator ()
             generateFuncBody funcName controlGraph = do
                 emitCmd "push rbp"
@@ -128,7 +134,7 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                         varIndex :: String -> Int
                         varIndex varName = 8 * case Map.lookup varName varIndices of
                             Just index -> index
-                            Nothing -> error $ "Variable " ++ varName ++ " not found"
+                            Nothing -> error $ "Variable " ++ varName ++ " not found (asm)"
 
                         varMemory :: String -> String
                         varMemory varName = "QWORD PTR [rbp-" ++ show (varIndex varName) ++ "]"
@@ -275,6 +281,29 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                                             generateFunctionArgs' (reg:regs) i (value:vs) = do
                                                 emitCmd ("mov " ++ reg ++ ", " ++ generateValue value)
                                                 generateFunctionArgs' regs i vs
+                        generateStatement (AllocArray varName value) = do
+                            emitCmd $ "mov rdi, " ++ generateValue value
+                            emitFunctionCall "__allocArray" 1
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (ArrayLength varName value) = do
+                            emitCmd $ "mov rax, " ++ generateValue value
+                            emitCmd "mov rax, QWORD PTR [rax]"
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (Load varName value1 value2) = do
+                            emitCmd $ "mov rdi, " ++ generateValue value1
+                            emitCmd $ "mov rsi, " ++ generateValue value2
+                            assert (isObject value1) "Load must be from array"
+                            assert (not $ isObject value2) "Load index must be not object"
+                            emitFunctionCall "__loadArray" 2
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (Store value1 value2 value3) = do
+                            assert (isObject value1) "Store must be to array"
+                            assert (not $ isObject value2) "Store index must be not object"
+                            emitCmd $ "mov rdi, " ++ generateValue value1
+                            emitCmd $ "mov rsi, " ++ generateValue value2
+                            emitCmd $ "mov rdx, " ++ generateValue value3
+                            emitFunctionCall "__storeArray" 3
+
 
                         emitFunctionCall :: String -> Int -> FunctionBodyGenerator ()
                         emitFunctionCall label argsNumber = do
@@ -305,4 +334,6 @@ gatherAllVariables graph = Set.toList $ foldr (flip $ foldr gatherVariables) (Se
         gatherVariables (BinaryOp _ varName _ _) = Set.insert varName
         gatherVariables (UnaryOp _ varName _) = Set.insert varName
         gatherVariables (Call varName _ _) = Set.insert varName
+        gatherVariables (AllocArray varName _) = Set.insert varName
+        gatherVariables (ArrayLength varName _) = Set.insert varName
         gatherVariables _ = id
