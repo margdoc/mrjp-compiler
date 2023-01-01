@@ -8,7 +8,9 @@ import Control.Monad.State (StateT (runStateT), modify)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
-import IntermediateTypes (Program, ControlGraph (..), Label, Statement (..), Block, Value (..), BinaryOpType (..), FunctionLabel (..), UnaryOpType (..), VarName)
+import IntermediateTypes (Program, ControlGraph (..), Label, Statement (..), Block, Value (..), BinaryOpType (..), UnaryOpType (..), VarName, methodLabel, FunctionLabel (..))
+import TypeCheckerTypes (GlobalTypes (..), ClassDef (..))
+import TypeChecker (selfKeyword)
 
 
 generateCmd :: String -> String
@@ -87,17 +89,89 @@ isObject :: Value -> Bool
 isObject (Object _) = True
 isObject _ = False
 
-generateAsmCode :: Program -> String
-generateAsmCode program = runFunctionBodyGenerator $ do
+data RawClassData = RawClassData
+    { rawOffsets :: [VarName]
+    , rawVtable :: [(Label, VarName)]
+    }
+
+data ClassData = ClassData
+    { offsets :: Map.Map VarName Int
+    , vtable :: Map.Map Label (VarName, Int)
+    }
+
+classDataFromRaw :: RawClassData -> ClassData
+classDataFromRaw rawClassData = ClassData
+    { offsets = Map.fromList $ zip (rawOffsets rawClassData) [0..]
+    , vtable = Map.fromList $ zip (map fst $ rawVtable rawClassData) $ zip (map snd $ rawVtable rawClassData) [0..]
+    }
+
+generateClassData :: Map.Map VarName ClassDef -> VarName -> ClassDef -> Map.Map VarName RawClassData -> Map.Map VarName RawClassData
+generateClassData classes className classDef acc = if Map.member className acc then acc else
+        Map.insert className (RawClassData attrs methods) parentAcc
+    where
+        attrs = parentAttrs ++ Map.keys (classAttributes classDef)
+        methods = Map.toList $ Map.union (Map.fromList $ zip (Map.keys (classMethods classDef)) (repeat className)) parentMethods
+        (parentAcc, maybeParentData) = case parentClass classDef of
+            Nothing -> (acc, Nothing)
+            Just parentName -> (parentAcc, Just parentData)
+                    where
+                        parentAcc = generateClassData classes parentName (classes Map.! parentName) acc
+                        parentData = parentAcc Map.! parentName
+        parentAttrs = maybe [] rawOffsets maybeParentData
+        parentMethods = Map.fromList $ maybe [] rawVtable maybeParentData
+
+vtableLabel :: VarName -> String
+vtableLabel className = className ++ "$vtable"
+
+generateAsmCode :: GlobalTypes -> Program -> String
+generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
     emitCmd ".intel_syntax noprefix"
     emitLabel ".LC0"
     emitCmd ".globl main"
     emitEmptyLine
     mapM_ (uncurry generateFunction) $ Map.toAscList program
     emitEmptyLine
+    emitCmd ".section .data"
+    generateVTables
+    emitEmptyLine
     emitCmd ".section .rodata"
     mapM_ (uncurry generateStringLiteral) $ Map.toAscList stringLabels
         where
+            classesDefs = globalClasses globalTypes
+            classesRawData = foldr (uncurry $ generateClassData classesDefs) Map.empty $ Map.toList classesDefs
+            classesData = Map.map classDataFromRaw classesRawData
+
+            getAttrOffset :: String -> String -> Int
+            getAttrOffset className attr = 8 + 8 * case Map.lookup className classesData of
+                Nothing -> error $ "Class " ++ className ++ " not found"
+                Just classData -> case Map.lookup attr $ offsets classData of
+                    Nothing -> error $ "Attribute " ++ attr ++ " not found in class " ++ className
+                    Just attrOffset -> attrOffset
+
+            getMethodOffset :: String -> Label -> Int
+            getMethodOffset className label = 8 * case Map.lookup className classesData of
+                Nothing -> error $ "Class " ++ className ++ " not found"
+                Just classData -> case Map.lookup label $ vtable classData of
+                    Nothing -> error $ "Method " ++ label ++ " not found in class " ++ className
+                    Just (_, methodOffset) -> methodOffset
+
+            getObjectSize :: String -> Int
+            getObjectSize className = 8 * case Map.lookup className classesData of
+                Nothing -> error $ "Class " ++ className ++ " not found"
+                Just classData -> Map.size $ offsets classData
+
+            generateVTableEntry :: (Label, VarName) -> FunctionBodyGenerator ()
+            generateVTableEntry (label, className) = do
+                emitCmd $ ".quad " ++ methodLabel className label
+
+            generateVTable :: VarName -> RawClassData -> FunctionBodyGenerator ()
+            generateVTable className classData = do
+                emitLabel $ vtableLabel className
+                mapM_ generateVTableEntry $ rawVtable classData
+
+            generateVTables :: FunctionBodyGenerator ()
+            generateVTables = mapM_ (uncurry generateVTable) $ Map.toList classesRawData
+
             stringLabels :: Map.Map String Int
             stringLabels = Map.fromList $ zip (Set.toList $ gatherAllStrings program) [1..]
 
@@ -166,10 +240,6 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                         generateValue (Object pointer) = varMemory pointer
                         generateValue (Constant int) = show int
 
-                        generateFunctionLabel :: FunctionLabel -> String
-                        generateFunctionLabel (FunctionLabel label) = label
-                        generateFunctionLabel (Pointer pointer) = show pointer
-
                         generateCalcBinaryOp :: BinaryOpType -> String
                         generateCalcBinaryOp Add = "add"
                         generateCalcBinaryOp Sub = "sub"
@@ -191,6 +261,40 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                             emitComment $ show statement
                             generateStatement statement
                             emitEmptyLine
+
+                        generateFunctionCall :: VarName -> FunctionLabel -> [Value] -> FunctionBodyGenerator ()
+                        generateFunctionCall varName functionLabel values = do
+                            generateFunctionArgs values
+                            case functionLabel of
+                                    FunctionLabel _ -> return ()
+                                    MethodLabel className methodLabel -> do
+                                    emitCmd $ "mov rax, QWORD PTR [rdi]"
+                                    emitCmd $ "mov rax , QWORD PTR [rax+" ++ show (getMethodOffset className methodLabel) ++ "]"
+                            emitFunctionCall (callLabel functionLabel) (max (length values - length argsRegisters) 0 + stackAligment)
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                                where
+                                    callLabel :: FunctionLabel -> String
+                                    callLabel (FunctionLabel label) = label
+                                    callLabel (MethodLabel _ _) = "rax"
+
+                                    alignStack :: Bool
+                                    alignStack = (allVariablesLength + length values) `mod` 2 == 1
+
+                                    stackAligment :: Int
+                                    stackAligment = if alignStack then 1 else 0
+
+                                    generateFunctionArgs :: [Value] -> FunctionBodyGenerator ()
+                                    generateFunctionArgs = generateFunctionArgs' argsRegisters (allVariablesLength + 1 + stackAligment)
+                                        where
+                                            generateFunctionArgs' :: [String] -> Int -> [Value] -> FunctionBodyGenerator ()
+                                            generateFunctionArgs' _ _ [] = return ()
+                                            generateFunctionArgs' [] i (value:vs) = do
+                                                emitCmd ("mov rax, " ++ generateValue value)
+                                                emitCmd ("mov QWORD PTR [rbp-" ++ show (8 * i) ++ "], rax")
+                                                generateFunctionArgs' [] (i + 1) vs
+                                            generateFunctionArgs' (reg:regs) i (value:vs) = do
+                                                emitCmd ("mov " ++ reg ++ ", " ++ generateValue value)
+                                                generateFunctionArgs' regs i vs
 
                         generateStatement :: Statement -> FunctionBodyGenerator ()
                         generateStatement (Assign varName value) = do
@@ -258,29 +362,8 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                         generateStatement (RemoveRef varName) = do
                             emitCmd $ "mov rdi, " ++ varMemory varName
                             emitFunctionCall "__removeRef" 1
-                        generateStatement (Call varName label values) = do
-                            generateFunctionArgs values
-                            emitFunctionCall (generateFunctionLabel label) (max (length values - length argsRegisters) 0 + stackAligment)
-                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
-                                where
-                                    alignStack :: Bool
-                                    alignStack = (allVariablesLength + length values) `mod` 2 == 1
-
-                                    stackAligment :: Int
-                                    stackAligment = if alignStack then 1 else 0
-
-                                    generateFunctionArgs :: [Value] -> FunctionBodyGenerator ()
-                                    generateFunctionArgs = generateFunctionArgs' argsRegisters (allVariablesLength + 1 + stackAligment)
-                                        where
-                                            generateFunctionArgs' :: [String] -> Int -> [Value] -> FunctionBodyGenerator ()
-                                            generateFunctionArgs' _ _ [] = return ()
-                                            generateFunctionArgs' [] i (value:vs) = do
-                                                emitCmd ("mov rax, " ++ generateValue value)
-                                                emitCmd ("mov QWORD PTR [rbp-" ++ show (8 * i) ++ "], rax")
-                                                generateFunctionArgs' [] (i + 1) vs
-                                            generateFunctionArgs' (reg:regs) i (value:vs) = do
-                                                emitCmd ("mov " ++ reg ++ ", " ++ generateValue value)
-                                                generateFunctionArgs' regs i vs
+                        generateStatement (Call varName label values) =
+                            generateFunctionCall varName (FunctionLabel label) values
                         generateStatement (AllocArray varName value) = do
                             emitCmd $ "mov rdi, " ++ generateValue value
                             emitFunctionCall "__allocArray" 1
@@ -303,6 +386,24 @@ generateAsmCode program = runFunctionBodyGenerator $ do
                             emitCmd $ "mov rsi, " ++ generateValue value2
                             emitCmd $ "mov rdx, " ++ generateValue value3
                             emitFunctionCall "__storeArray" 3
+                        generateStatement (Get varName self className attr) = do
+                            emitCmd $ "mov rax, " ++ generateValue self
+                            emitCmd $ "mov rax, QWORD PTR [rax + " ++ show (getAttrOffset className attr) ++ "]"
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (Set self className attr value) = do
+                            emitCmd $ "mov rax, " ++ generateValue self
+                            emitCmd $ "mov rdx, " ++ generateValue value
+                            emitCmd $ "mov QWORD PTR [rax + " ++ show (getAttrOffset className attr) ++ "], rdx"
+                        generateStatement (AllocObject varName className) = do
+                            emitCmd $ "mov rdi, " ++ show (getObjectSize className)
+                            emitCmd $ "lea rsi, [rip+" ++ vtableLabel className ++ "]"
+                            emitFunctionCall "__allocObject" 2
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (Self varName) = do
+                            emitCmd $ "mov rax, " ++ generateValue (Object selfKeyword)
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (CallMethod varName self className methodLabel values) =
+                            generateFunctionCall varName (MethodLabel className methodLabel) (self : values)
 
 
                         emitFunctionCall :: String -> Int -> FunctionBodyGenerator ()
@@ -336,4 +437,8 @@ gatherAllVariables graph = Set.toList $ foldr (flip $ foldr gatherVariables) (Se
         gatherVariables (Call varName _ _) = Set.insert varName
         gatherVariables (AllocArray varName _) = Set.insert varName
         gatherVariables (ArrayLength varName _) = Set.insert varName
+        gatherVariables (Get varName _ _ _) = Set.insert varName
+        gatherVariables (AllocObject varName _) = Set.insert varName
+        gatherVariables (CallMethod varName _ _ _ _) = Set.insert varName
+        gatherVariables (Self varName) = Set.insert varName
         gatherVariables _ = id

@@ -25,13 +25,6 @@ instance Show Value where
 
 type Label = String
 
-data FunctionLabel = FunctionLabel Label
-                   | Pointer Value
-
-instance Show FunctionLabel where
-    show (FunctionLabel label) = label
-    show (Pointer value) = "*" ++ show value
-
 data BinaryOpType = Add
                   | Sub
                   | Mul
@@ -75,9 +68,14 @@ data Statement = BinaryOp BinaryOpType VarName Value Value
                | Store Value Value Value    -- value1[value2] = value3
                | ArrayLength VarName Value
                | AllocArray VarName Value
+               | Get VarName Value VarName VarName
+               | Set Value VarName VarName Value
+               | AllocObject VarName String
+               | Self VarName
                | Assign VarName Value
                | AssignString VarName String
-               | Call VarName FunctionLabel [Value]   -- function_label arguments...
+               | Call VarName Label [Value]   -- function_label arguments...
+               | CallMethod VarName Value VarName Label [Value]
                | Goto Label
                | Return Value
                | VReturn
@@ -93,14 +91,19 @@ instance Show Statement where
     show (Store value1 value2 value3) = show value1 ++ "[" ++ show value2 ++ "] = " ++ show value3
     show (ArrayLength varName value) = varName ++ " = " ++ show value ++ ".length"
     show (AllocArray varName value) = varName ++ " = new[" ++ show value ++ "]"
+    show (Get varName value className varName') = varName ++ " = " ++ show value ++ "." ++ className ++ "." ++ varName'
+    show (Set value className varName' value') = show value ++ "." ++ className ++ "." ++ varName' ++ " = " ++ show value'
+    show (AllocObject varName string) = varName ++ " = new " ++ string
     show (Assign varName value) = varName ++ " = " ++ show value
     show (AssignString varName string) = varName ++ " = " ++ show string
-    show (Call varName functionLabel values) = varName ++ " = " ++ show functionLabel ++ "(" ++ intercalate ", " (map show values) ++ ")"
+    show (Call varName functionLabel values) = varName ++ " = " ++ functionLabel ++ "(" ++ intercalate ", " (map show values) ++ ")"
+    show (CallMethod varName value className varName' values) = varName ++ " = " ++ show value ++ "." ++ className ++ "." ++ varName' ++ "(" ++ intercalate ", " (map show values) ++ ")"
     show (Goto label) = "goto " ++ label
     show (Return value) = "return " ++ show value
     show VReturn = "return"
     show (AddRef varName) = "++" ++ varName
     show (RemoveRef varName) = "--" ++ varName
+    show (Self varName) = varName ++ " = self"
 
 type Block = [Statement]
 
@@ -119,3 +122,9 @@ instance Show ControlGraph where
         "\ndata:\n" ++ unlines (map (\(label, block) -> "Label " ++ label ++ ":\n" ++ unlines (map (("  " ++) . show) block)) $ Map.assocs graphData')
 
 type Program = Map.Map Label ControlGraph
+
+methodLabel :: VarName -> VarName -> Label
+methodLabel className methodName = className ++ "." ++ methodName
+
+data FunctionLabel = FunctionLabel Label
+                   | MethodLabel VarName Label

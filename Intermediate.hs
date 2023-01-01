@@ -10,8 +10,9 @@ import qualified Data.Map as Map
 
 import qualified Grammar.Abs as Abs
 
-import TypeCheckerTypes ( Type (..), GlobalTypes (..), FuncDef (..) )
-import IntermediateTypes ( Program, Label, ControlGraph (..), VarName, Block, Statement (..), Value (..), BinaryOpType (..), UnaryOpType (..), FunctionLabel (..) )
+import TypeCheckerTypes ( Type (..), GlobalTypes (..), FuncDef (..), ClassDef (..) )
+import IntermediateTypes ( Program, Label, ControlGraph (..), VarName, Block, Statement (..), Value (..), BinaryOpType (..), UnaryOpType (..), methodLabel )
+import TypeChecker (selfKeyword)
 
 type IntermediateMonad = ExceptT String (ReaderT IEnv IO)
 
@@ -25,22 +26,46 @@ runIntermediateMonad types monad = runReaderT (runExceptT monad) $ IEnv
     }
 
 transpile :: Abs.Program -> IntermediateMonad Program
-transpile (Abs.Program _ defs) = mapM transpileDef defs <&> Map.fromList
+transpile (Abs.Program _ defs) = mapM transpileDef defs <&> Map.fromList . concat
 
+transpileFuncBody :: Abs.Block -> [(VarName, Type)] -> IntermediateMonad ControlGraph
+transpileFuncBody body argTypes = runControlGraphMonad argTypes $ do
+    transpileBlock body
 
-transpileDef :: Abs.TopDef -> IntermediateMonad (Label, ControlGraph)
+    -- if there is no return statement, emit return at the end of function
+    emitOnReturnDestruct
+    emit VReturn
+
+    pushBlock
+    return ()
+
+transpileMethodDef :: VarName -> Abs.FnDef -> IntermediateMonad (Label, ControlGraph)
+transpileMethodDef className (Abs.FnDef _ _ (Abs.Ident label) args body) = do
+    let argTypes = map (\(Abs.Arg _ t (Abs.Ident argName)) -> (argName, evalType t)) args
+    controlGraph <- transpileFuncBody body ((selfKeyword, TClass className) : argTypes)
+    return (methodLabel className label, controlGraph)
+
+transpileDef :: Abs.TopDef -> IntermediateMonad [(Label, ControlGraph)]
 transpileDef (Abs.TopFnDef _ (Abs.FnDef _ _ (Abs.Ident label) args body)) = do
     let argTypes = map (\(Abs.Arg _ t (Abs.Ident argName)) -> (argName, evalType t)) args
-    controlGraph <- runControlGraphMonad argTypes $ do
-        transpileBlock body
-
-        -- if there is no return statement, emit return at the end of function
-        emitOnReturnDestruct
-        emit VReturn
-
-        pushBlock
-        return ()
-    return (label, controlGraph)
+    controlGraph <- transpileFuncBody body argTypes
+    return $ return (label, controlGraph)
+transpileDef (Abs.TopClassDef _ classTopDef) = do
+    classDef <- asks (Map.lookup className . globalClasses . iEnvTypes) <&> \case
+        Just classDef -> classDef
+        Nothing -> error $ "transpileDef(Abs.TopClassDef): class " ++ className ++ " not found"
+    local (\env -> env { iEnvTypes = (iEnvTypes env)
+        { globalFunctions = Map.union (classMethods classDef) (globalFunctions $ iEnvTypes env)
+        } }) $ mapM (transpileMethodDef className) classMethodsDefs
+        where
+            className = case classTopDef of
+                Abs.ClassDefSimple _ (Abs.Ident name) _ -> name
+                Abs.ClassDefExtended _ (Abs.Ident name) _ _ -> name
+            classDefs = case classTopDef of
+                Abs.ClassDefSimple _ _ methods' -> methods'
+                Abs.ClassDefExtended _ _ _ methods' -> methods'
+            classMethodsDefs = map (\case Abs.ClassFnDef _ fnDef -> fnDef; _ -> error "transpileDef(Abs.TopClassDef): not Abs.ClassFnDef") $
+                        filter (\case Abs.ClassFnDef{} -> True; _ -> False) classDefs
 
 
 initialLabel :: Label
@@ -97,7 +122,7 @@ data CEnv = CEnv
 
 initialEnv :: [(VarName, Type)] -> GlobalTypes -> CEnv
 initialEnv argTypes types = CEnv
-    { cEnvVariablesValues = Map.fromList $ map (\(k, _) -> (k, k)) argTypes
+    { cEnvVariablesValues = Map.fromList (map (\(k, _) -> (k, k)) argTypes)
     , cEnvGlobalTypes = types
     , cEnvAliveObjects = []
     , cEnvBlockObjects = []
@@ -185,7 +210,7 @@ evalType = \case
   Abs.Bool _ -> TBool
   Abs.Str _ -> TString
   Abs.Void _ -> TVoid
-  Abs.ClassType _ _ -> undefined
+  Abs.ClassType _ (Abs.Ident t) -> TClass t
   -- Abs.Array _ (Abs.Array _ _) -> throwException TCMultiDimensionalArray
   Abs.Array _ t -> TArray $ evalType t
 
@@ -231,6 +256,8 @@ emitWhileLoop cond body = do
 
     currentLabel' <- gets $ currentLabel . foldData
     addEdges [(currentLabel', [label1]), (label1, [label2, label3]), (label2, [label1])]
+
+    emit $ Goto label1
 
     newBlock label1 $ do
         value <- cond
@@ -311,37 +338,37 @@ transpileStmt' (Abs.Decr _ (Abs.LValue _ expr)) = do
 transpileStmt' (Abs.Ass _ lvalue expr2) = do
     value <- transpileExpr expr2
     isObject' <- case value of
-            Object varName -> do
-                emit $ AddRef varName
-                return True
-            _ -> return False
+        Object varName -> do
+            emit $ AddRef varName
+            return True
+        _ -> return False
     transpiledLValue <- transpileLValue lvalue
 
-    let varName = case transpiledLValue of
-            LValue varName -> varName
-            LValueArrayElem value1 _ -> case value1 of
-                Variable varName -> varName
-                Object varName -> varName
-                _ -> error "LValueArrayElem: not a variable"
+    let removeRef getStatement = do
+        t <- getTypeFromValue value
+        tmpName <- getNewVariable t
+        emit $ getStatement tmpName
+        emit $ RemoveRef tmpName
 
-    when isObject' $ emit $ RemoveRef varName
     case transpiledLValue of
         LValue varName -> do
+            when isObject' $ emit $ RemoveRef varName
             emit $ Assign varName value
-        LValueArrayElem value1 value2 ->
+        LValueArrayElem value1 value2 -> do
+            when isObject' $ removeRef (\tmp -> Load tmp value1 value2)
             emit $ Store value1 value2 value
+        LValueAttr value1 attrName -> do
+            className <- getClassName value1
+            when isObject' $ removeRef (\tmp -> Get tmp value1 className attrName)
+            emit $ Set value1 className attrName value
     return id
 transpileStmt' (Abs.ForLoop _ t' (Abs.Ident varName) (Abs.Ident array) expr) = do
-    iteratorVar <- freshTmpName
-    addNewVariable iteratorVar TInt
-    arrayLength <- freshTmpName
-    addNewVariable arrayLength TInt
-    comparisonVar <- freshTmpName
-    addNewVariable arrayLength TBool
+    iteratorVar <- getNewVariable TInt
+    arrayLength <- getNewVariable TInt
+    comparisonVar <- getNewVariable TBool
 
     let t = evalType t'
-    tmpVar <- freshTmpName
-    addNewVariable tmpVar t
+    tmpVar <- getNewVariable t
 
     emit $ Assign iteratorVar (Constant 0)
     emit $ ArrayLength arrayLength (Object array)
@@ -353,7 +380,7 @@ transpileStmt' (Abs.ForLoop _ t' (Abs.Ident varName) (Abs.Ident array) expr) = d
             emit $ Load tmpVar (Object array) (Variable iteratorVar)
             envChange <- transpileDecl' t' varName (Variable tmpVar)
             local envChange $ do
-                transpileStmt expr
+                _ <- transpileStmt expr
                 emit $ BinaryOp Add iteratorVar (Variable iteratorVar) (Constant 1)
 
     emitWhileLoop cond body
@@ -374,24 +401,21 @@ setType varName t = do
     addNewVariable newVarName t'
     return (\env -> env { cEnvVariablesValues = Map.insert varName newVarName (cEnvVariablesValues env) }, newVarName)
 
+getClassName :: Value -> ControlGraphMonad VarName
+getClassName value = getTypeFromValue value <&> \case
+    TClass t -> t
+    _ -> error "getClassName: not a class"
 
 getTypeFromValue :: Value -> ControlGraphMonad Type
 getTypeFromValue (Constant _) = return TInt
-getTypeFromValue (Variable varName) = do
-    variablesTypes' <- gets variablesTypes
-    case Map.lookup varName variablesTypes' of
-        Nothing -> error $ "Variable " ++ varName ++ " not found (Variable)"
-        Just t -> return t
-getTypeFromValue (Object varName) = do
-    variablesTypes' <- gets variablesTypes
-    case Map.lookup varName variablesTypes' of
-        Nothing -> error $ "Variable " ++ varName ++ " not found (Object)"
-        Just t -> return t
+getTypeFromValue (Variable varName) = getVarType varName
+getTypeFromValue (Object varName) = getVarType varName
 
 
 isObject :: Type -> Bool
 isObject TString = True
 isObject (TArray _) = True
+isObject (TClass _) = True
 isObject _ = False
 
 
@@ -437,51 +461,118 @@ transpileRelOp = \case
     Abs.EQU _ -> Equal
     Abs.NE _ -> NotEqual
 
-createValue :: VarName -> Type -> ControlGraphMonad Value
-createValue varName t =
+createValue :: VarName -> ControlGraphMonad Value
+createValue varName = getVarType varName <&> \t -> if isObject t then Object varName else Variable varName
+
+isAttr :: VarName -> ControlGraphMonad (Maybe Type)
+isAttr varName = do
     gets (Map.lookup varName . variablesTypes) >>= \case
-        Nothing -> error $ "Variable " ++ varName ++ " not found"
-        Just t -> return $ if isObject t then Object varName else Variable varName
+        Just _ -> return Nothing
+        _ ->  gets (Map.lookup selfKeyword . variablesTypes) >>= \case
+            Just _ -> do
+                className <- getVarType selfKeyword >>= \case
+                    TClass t -> return t
+                    _ -> error "transpileLValue(Abs.LValue): Class expected"
+
+                asks (Map.lookup className . globalClasses . cEnvGlobalTypes) >>= \case
+                    Just classDef -> return $ Map.lookup varName $ classAttributes classDef
+                    _ -> error "transpileLValue(Abs.LValue): Class not found"
+            _ -> return Nothing
 
 data LValue = LValue VarName
             | LValueArrayElem Value Value
+            | LValueAttr Value VarName
 
 transpileLValue :: Abs.LValue -> ControlGraphMonad LValue
-transpileLValue (Abs.LValue _ (Abs.EVar _ (Abs.Ident varName))) = return $ LValue varName
+transpileLValue (Abs.LValue _ (Abs.EVar _ (Abs.Ident varName))) =
+    isAttr varName >>= \case
+        Just _ -> do
+            self <- getSelf
+            return $ LValueAttr self varName
+        _ -> return $ LValue varName
 transpileLValue (Abs.LValue _ (Abs.EArrayElem _ expr1 expr2)) = do
     value1 <- transpileExpr expr1
     value2 <- transpileExpr expr2
     return $ LValueArrayElem value1 value2
+transpileLValue (Abs.LValue _ (Abs.EAttr _ expr (Abs.Ident attrName))) = do
+    value <- transpileExpr expr
+    return $ LValueAttr value attrName
+transpileLValue _ = error "transpileLValue: Invalid LValue"
 
+getVarType :: VarName -> ControlGraphMonad Type
+getVarType varName = gets (Map.lookup varName . variablesTypes) >>= \case
+    Nothing -> error $ "Variable " ++ varName ++ " not found"
+    Just t -> return t
+
+getSelf :: ControlGraphMonad Value
+getSelf = do
+    getVarType selfKeyword >>= \t -> do
+        tmpName <- getNewVariable t
+        emit $ Assign tmpName (Object selfKeyword)
+        return $ Object tmpName
+
+getNewVariable :: Type -> ControlGraphMonad VarName
+getNewVariable t = do
+    tmpName <- freshTmpName
+    addNewVariable tmpName t
+    return tmpName
+
+transpileMethodApp :: Value -> Label -> [Value] -> ControlGraphMonad Value
+transpileMethodApp object funcName args = do
+    className <- getClassName object
+    funcReturnType' <- asks (Map.lookup className . globalClasses . cEnvGlobalTypes) >>= \case
+        Just classDef -> case Map.lookup funcName $ classMethods classDef of
+            Just t' -> return $ funcReturnType t'
+            _ -> error "transpileMethodApp: Method not found"
+        _ -> error "transpileMethodApp: Class not found"
+    transpileFuncApp (\tmp -> CallMethod tmp object className) funcReturnType' funcName args
+
+transpileFuncApp :: (VarName -> Label -> [Value] -> Statement) -> Type -> Label -> [Value] -> ControlGraphMonad Value
+transpileFuncApp funcCtor t funcName args = do
+    tmpName <- getNewVariable t
+
+    mapM_ (\case
+        Object varName -> do
+            emit $ AddRef varName
+            addToDestruct varName
+        _ -> return ()) args
+    -- TODO: procedures
+    emit $ funcCtor tmpName funcName args
+    when (isObject t) $ addToDestruct tmpName
+
+    createValue tmpName
 
 transpileExpr :: Abs.Expr -> ControlGraphMonad Value
 transpileExpr (Abs.ELitInt _ i) = return $ Constant $ fromInteger i
 transpileExpr (Abs.ELitTrue _) = return $ Constant 1
 transpileExpr (Abs.ELitFalse _) = return $ Constant 0
 transpileExpr (Abs.EString _ s) = do
-    tmpName <- freshTmpName
-    addNewVariable tmpName TString
+    tmpName <- getNewVariable TString
 
     emit $ AssignString tmpName s
     return $ Object tmpName
-transpileExpr (Abs.EVar _ (Abs.Ident varName)) = do
-    gets (Map.lookup varName . variablesTypes) >>= \case
-        Nothing -> error $ "Variable " ++ varName ++ " not found"
-        Just t -> return $ if isObject t then Object varName else Variable varName
+transpileExpr (Abs.EVar _ (Abs.Ident varName)) =
+    isAttr varName >>= \case
+        Just t -> do
+            tmpName <- getNewVariable t
+            self <- getSelf
+            className <- getClassName self
+            emit $ Get tmpName self className varName
+            createValue tmpName
+        Nothing -> createValue varName
+
 transpileExpr (Abs.EAdd _ expr1 op expr2) = do
     value1 <- transpileExpr expr1
     value2 <- transpileExpr expr2
     t <- getTypeFromValue value1
     case (t, op) of
         (TInt, _) -> do
-            tmpName <- freshTmpName
-            addNewVariable tmpName TInt
+            tmpName <- getNewVariable TInt
 
             emit $ BinaryOp (transpileAddOp op) tmpName value1 value2
             return $ Variable tmpName
         (TString, Abs.Plus _) -> do
-            tmpName <- freshTmpName
-            addNewVariable tmpName TString
+            tmpName <- getNewVariable TString
 
             emit $ BinaryOp Concat tmpName value1 value2
             return $ Object tmpName
@@ -490,8 +581,7 @@ transpileExpr (Abs.EMul _ expr1 op expr2) = do
     value1 <- transpileExpr expr1
     value2 <- transpileExpr expr2
 
-    tmpName <- freshTmpName
-    addNewVariable tmpName TInt
+    tmpName <- getNewVariable TInt
 
     emit $ BinaryOp (transpileMulOp op) tmpName value1 value2
     return $ Variable tmpName
@@ -499,28 +589,32 @@ transpileExpr (Abs.ERel _ expr1 op expr2) = do
     value1 <- transpileExpr expr1
     value2 <- transpileExpr expr2
 
-    tmpName <- freshTmpName
-    addNewVariable tmpName TBool
+    tmpName <- getNewVariable TBool
 
     emit $ BinaryOp (transpileRelOp op) tmpName value1 value2
     return $ Variable tmpName
 transpileExpr (Abs.EApp _ (Abs.Ident funcName) exprs) = do
     values <- mapM transpileExpr exprs
 
-    -- TODO: methods
-    tmpName <- freshTmpName
-    funcReturnType' <- asks $ funcReturnType . (Map.! funcName) . globalFunctions . cEnvGlobalTypes
-    addNewVariable tmpName funcReturnType'
+    let emitFunc = do
+        funcReturnType' <- asks $ funcReturnType . (Map.! funcName) . globalFunctions . cEnvGlobalTypes
+        transpileFuncApp Call funcReturnType' funcName values
 
-    mapM_ (\case
-        Object varName -> do
-            emit $ AddRef varName
-            addToDestruct varName
-        _ -> return ()) values
-    emit $ Call tmpName (FunctionLabel funcName) values
-    when (isObject funcReturnType') $ addToDestruct tmpName
+    gets (Map.lookup selfKeyword . variablesTypes) >>= \case
+        Just _ -> do
+            className <- getVarType selfKeyword >>= \case
+                TClass t -> return t
+                _ -> error "transpileExpr(Abs.EApp): Class expected"
 
-    return $ if isObject funcReturnType' then Object tmpName else Variable tmpName
+            asks (Map.lookup className . globalClasses . cEnvGlobalTypes) >>= \case
+                Just classDef -> case Map.lookup funcName $ classMethods classDef of
+                    Just _ -> do
+                        self <- getSelf
+                        transpileMethodApp self funcName values
+                    _ -> emitFunc
+                _ -> error "transpileExpr(Abs.EApp): Class not found"
+        _ -> emitFunc
+
 transpileExpr (Abs.EOr _ expr1 expr2) = do
     value1 <- transpileExpr expr1
     label1 <- freshLabelsName
@@ -528,8 +622,7 @@ transpileExpr (Abs.EOr _ expr1 expr2) = do
     label3 <- freshLabelsName
     emit $ If value1 label1 label2
 
-    tmpName <- freshTmpName
-    addNewVariable tmpName TBool
+    tmpName <- getNewVariable TBool
 
     currentLabel' <- gets $ currentLabel . foldData
     addEdges [(currentLabel', [label1, label2]), (label1, [label3]), (label2, [label3])]
@@ -552,8 +645,7 @@ transpileExpr (Abs.EAnd _ expr1 expr2) = do
     label3 <- freshLabelsName
     emit $ If value1 label1 label2
 
-    tmpName <- freshTmpName
-    addNewVariable tmpName TBool
+    tmpName <- getNewVariable TBool
 
     currentLabel' <- gets $ currentLabel . foldData
     addEdges [(currentLabel', [label1, label2]), (label1, [label3]), (label2, [label3])]
@@ -564,29 +656,26 @@ transpileExpr (Abs.EAnd _ expr1 expr2) = do
         emit $ Goto label3
 
     newBlock label2 $ do
-        emit $ Assign tmpName (Constant 1)
+        emit $ Assign tmpName (Constant 0)
         emit $ Goto label3
 
     setLabel label3
     return $ Variable tmpName
 transpileExpr (Abs.Neg _ expr) = do
     value <- transpileExpr expr
-    tmpName <- freshTmpName
-    addNewVariable tmpName TInt
+    tmpName <- getNewVariable TInt
 
     emit $ UnaryOp Neg tmpName value
     return $ Variable tmpName
 transpileExpr (Abs.Not _ expr) = do
     value <- transpileExpr expr
-    tmpName <- freshTmpName
-    addNewVariable tmpName TBool
+    tmpName <- getNewVariable TBool
 
     emit $ UnaryOp Not tmpName value
     return $ Variable tmpName
 transpileExpr (Abs.EAlloc _ t expr) = do
     value <- transpileExpr expr
-    tmpName <- freshTmpName
-    addNewVariable tmpName (TArray $ evalType t)
+    tmpName <- getNewVariable $ TArray $ evalType t
 
     emit $ AllocArray tmpName value
     return $ Object tmpName
@@ -598,19 +687,43 @@ transpileExpr (Abs.EArrayElem _ expr1 expr2) = do
         TArray t' -> return t'
         _ -> error "transpileExpr(Abs.EArrayElem): Array expected"
 
-    tmpName <- freshTmpName
-    addNewVariable tmpName t
+    tmpName <- getNewVariable t
 
     emit $ Load tmpName array value
-    createValue tmpName t
+    createValue tmpName
 transpileExpr (Abs.EAttr _ expr1 (Abs.Ident attr)) = do
     object <- transpileExpr expr1
 
     case attr of
         "length" -> do
-            tmpName <- freshTmpName
-            addNewVariable tmpName TInt
+            tmpName <- getNewVariable TInt
 
             emit $ ArrayLength tmpName object
             return $ Variable tmpName
-        _ -> undefined --TODO: attributes
+        _ -> do
+            className <- getClassName object
+            t <- asks $ Map.lookup className . globalClasses . cEnvGlobalTypes >>= \case
+                Just classDef -> case Map.lookup attr $ classAttributes classDef of
+                    Just t' -> return t'
+                    _ -> error "transpileExpr(Abs.EAttr): Attribute not found"
+                _ -> error "transpileExpr(Abs.EAttr): Class not found"
+            tmpName <- getNewVariable t
+
+            emit $ Get tmpName object className attr
+            createValue tmpName
+transpileExpr (Abs.ECastedNull _ t _) = do
+    tmpName <- getNewVariable $ evalType t
+
+    emit $ Assign tmpName (Constant 0)
+    return $ Object tmpName
+transpileExpr (Abs.ESelf _) = getSelf
+transpileExpr (Abs.ECtor _ (Abs.Ident className)) = do
+    tmpName <- getNewVariable $ TClass className
+
+    emit $ AllocObject tmpName className
+    return $ Object tmpName
+transpileExpr (Abs.EMethod _ expr (Abs.Ident funcName) exprs) = do
+    object <- transpileExpr expr
+    values <- mapM transpileExpr exprs
+
+    transpileMethodApp object funcName values

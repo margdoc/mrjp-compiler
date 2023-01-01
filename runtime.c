@@ -3,9 +3,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define DEBUG 1
-
-#define debug(...) do { if (DEBUG) { printf(__VA_ARGS__); } } while (0)
 
 void error () {
     puts("runtime error");
@@ -98,12 +95,9 @@ long __loadArray(void* p, long index) {
 
     counterType length = *(counterType*)p;
     if (index < 0 || index >= length) {
-        debug("load array: %p, %ld\n", p, index);
         puts("array index out of bounds");
         exit(1);
     }
-
-    debug("load array: %p, %ld, %ld\n", p, index, *((long*)(p + 8 + 8 * index)));
 
     return *((long*)(p + 8 + 8 * index));
 }
@@ -116,11 +110,16 @@ void __storeArray(void* p, long index, long value) {
 
     counterType length = *(counterType*)p;
     if (index < 0 || index >= length) {
-        debug("store array: %p, %ld\n", p, index);
         puts("array index out of bounds");
         exit(1);
     }
 
-    debug("store array: %p, %ld, %ld\n", p, index, value);
     *((long*)(p + 8 + 8 * index)) = value;
+}
+
+void* __allocObject(int size, long* vtable) {
+    void *p = __alloc(size + 8);
+    memset(p + sizeof(long), 0, size);
+    *(long**)p = vtable;
+    return p;
 }

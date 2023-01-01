@@ -635,7 +635,7 @@ buildClassesAfterInheritance env = do
     ) classes }
 
 
-typeChecker :: Abs.Program -> TypeChecker GlobalTypes
+typeChecker :: Abs.Program -> TypeChecker (GlobalTypes, GlobalTypes)
 typeChecker (Abs.Program _ topDefs) = do
   evalEnv <- foldM (\envTrans topDef ->
       local envTrans $ evalTypeChecker topDef <&> (.) envTrans
@@ -644,6 +644,12 @@ typeChecker (Abs.Program _ topDefs) = do
   local evalEnv $ do
     env <- ask
     env' <- buildClassesAfterInheritance env
+
+    e1 <- asks $ \e -> GlobalTypes {
+      globalFunctions = tenvFunctions e,
+      globalClasses = tenvClasses e
+    }
+
     local (const env') $ do
       mainFunction <- asks $ getFunc mainFunctionName
       case mainFunction of
@@ -661,11 +667,13 @@ typeChecker (Abs.Program _ topDefs) = do
           checkClass (classNameFromDef classDef) classDef (classes Map.! classNameFromDef classDef)
         ) classesDefs
 
-      asks $ \e -> GlobalTypes {
+      e2 <- asks $ \e -> GlobalTypes {
         globalFunctions = tenvFunctions e,
         globalClasses = tenvClasses e
       }
 
+      return (e1, e2)
 
-runTypeChecker :: TypeChecker GlobalTypes -> TEnv -> IO (Either TypeCheckException GlobalTypes)
+
+runTypeChecker :: TypeChecker a -> TEnv -> IO (Either TypeCheckException a)
 runTypeChecker = runReaderT . runExceptT

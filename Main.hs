@@ -41,16 +41,16 @@ execProgram options parsed =
       printStdErr "ERROR"
       printStdErr (show err)
       exitFailure
-    Right types ->  do
+    Right types@(rawTypes, preparedTypes) ->  do
       printStdErr "OK"
       when (compileOptionDebug options) $ print types
 
-      unless (compileOptionOnlyTypeChecker options) $ runIntermediateMonad types (transpile parsed) >>= \case
+      unless (compileOptionOnlyTypeChecker options) $ runIntermediateMonad preparedTypes (transpile parsed) >>= \case
         Left err -> do
           error err
         Right intermediate -> do
           when (compileOptionDebug options) $ print intermediate
-          let code = generateAsmCode intermediate
+          let code = generateAsmCode rawTypes intermediate
 
           let fileNameWithoutExt = reverse . drop 4 . reverse $ compileOptionFileName options
           let asmFile = fileNameWithoutExt ++ ".s"
