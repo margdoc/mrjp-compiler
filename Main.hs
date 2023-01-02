@@ -15,6 +15,8 @@ import TypeChecker  ( runTypeChecker, typeChecker, emptyTEnv )
 import Intermediate ( transpile, runIntermediateMonad )
 import Common       ( (.>) )
 import AsmGenerator (generateAsmCode)
+import qualified SSA
+import qualified RemoveSSA
 
 printStdErr :: String -> IO ()
 printStdErr = hPutStrLn stderr
@@ -41,16 +43,25 @@ execProgram options parsed =
       printStdErr "ERROR"
       printStdErr (show err)
       exitFailure
-    Right types@(rawTypes, preparedTypes) ->  do
+    Right (rawTypes, preparedTypes) ->  do
       printStdErr "OK"
-      when (compileOptionDebug options) $ print types
 
       unless (compileOptionOnlyTypeChecker options) $ runIntermediateMonad preparedTypes (transpile parsed) >>= \case
         Left err -> do
           error err
         Right intermediate -> do
           when (compileOptionDebug options) $ print intermediate
-          let code = generateAsmCode rawTypes intermediate
+
+          let ssa = SSA.transform intermediate
+          let withoutSSA = RemoveSSA.transform ssa
+          unless (RemoveSSA.check withoutSSA) $ do
+            printStdErr "ERROR"
+            print ssa
+            printStdErr "RemoveSSA transformation failed"
+            print withoutSSA
+            exitFailure
+
+          let code = generateAsmCode rawTypes withoutSSA
 
           let fileNameWithoutExt = reverse . drop 4 . reverse $ compileOptionFileName options
           let asmFile = fileNameWithoutExt ++ ".s"

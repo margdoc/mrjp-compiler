@@ -9,7 +9,7 @@ import Control.Monad.State (StateT (runStateT), modify, gets)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
-import IntermediateTypes (Program, ControlGraph (..), Label, Statement (..), Block, Value (..), BinaryOpType (..), UnaryOpType (..), VarName, methodLabel, FunctionLabel (..))
+import IntermediateTypes (Program, ControlGraph (..), Label, Statement (..), Block, Value (..), BinaryOpType (..), UnaryOpType (..), VarName, methodLabel, FunctionLabel (..), varNames)
 import TypeCheckerTypes (GlobalTypes (..), ClassDef (..))
 import TypeChecker (selfKeyword)
 
@@ -83,14 +83,6 @@ emitEmptyLine = emitAsmLine EmptyLine
 argsRegisters :: [String]
 argsRegisters = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
 
-
-assert :: Bool -> String -> FunctionBodyGenerator ()
-assert True _ = return ()
-assert False err = error err
-
-isObject :: Value -> Bool
-isObject (Object _) = True
-isObject _ = False
 
 data RawClassData = RawClassData
     { rawOffsets :: [VarName]
@@ -393,7 +385,7 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                         generateStatement (UnaryOp Not varName value) = do
                             emitCmd $ "mov rax, " ++ generateValue value
                             emitCmd "cmp rax, 0"
-                            emitCmd "mov rax, 0"
+                            emitCmd "xor rax, rax"
                             emitCmd "sete al"
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (Goto label) =
@@ -420,13 +412,9 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                         generateStatement (Load varName value1 value2) = do
                             emitCmd $ "mov rdi, " ++ generateValue value1
                             emitCmd $ "mov rsi, " ++ generateValue value2
-                            assert (isObject value1) "Load must be from array"
-                            assert (not $ isObject value2) "Load index must be not object"
                             emitFunctionCall "__loadArray" 2
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (Store value1 value2 value3) = do
-                            assert (isObject value1) "Store must be to array"
-                            assert (not $ isObject value2) "Store index must be not object"
                             emitCmd $ "mov rdi, " ++ generateValue value1
                             emitCmd $ "mov rsi, " ++ generateValue value2
                             emitCmd $ "mov rdx, " ++ generateValue value3
@@ -449,6 +437,7 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (CallMethod varName self className label values) =
                             generateFunctionCall varName (MethodLabel className label) (self : values)
+                        generateStatement _ = error "Unsupported statement"
 
 
                         emitFunctionCall :: String -> Int -> FunctionBodyGenerator ()
@@ -470,20 +459,10 @@ gatherAllStrings = foldr gatherAllStrings' Set.empty . Map.elems
         gatherAllStrings''' (AssignString _ str) = Set.insert str
         gatherAllStrings''' _ = id
 
+
+
 gatherAllVariables :: ControlGraph -> [String]
 gatherAllVariables graph = Set.toList $ foldr (flip $ foldr gatherVariables) (Set.fromList $ graphArgs graph) $ Map.elems $ graphData graph
     where
         gatherVariables :: Statement -> Set.Set String -> Set.Set String
-        gatherVariables (Assign varName _) = Set.insert varName
-        gatherVariables (AssignString varName _) = Set.insert varName
-        gatherVariables (Load varName _ _) = Set.insert varName
-        gatherVariables (BinaryOp _ varName _ _) = Set.insert varName
-        gatherVariables (UnaryOp _ varName _) = Set.insert varName
-        gatherVariables (Call varName _ _) = Set.insert varName
-        gatherVariables (AllocArray varName _) = Set.insert varName
-        gatherVariables (ArrayLength varName _) = Set.insert varName
-        gatherVariables (Get varName _ _ _) = Set.insert varName
-        gatherVariables (AllocObject varName _) = Set.insert varName
-        gatherVariables (CallMethod varName _ _ _ _) = Set.insert varName
-        gatherVariables (Self varName) = Set.insert varName
-        gatherVariables _ = id
+        gatherVariables stmt = maybe id Set.insert (fst $ varNames stmt)

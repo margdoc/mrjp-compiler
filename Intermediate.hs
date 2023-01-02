@@ -45,11 +45,27 @@ transpileMethodDef className (Abs.FnDef _ _ (Abs.Ident label) args body) = do
     controlGraph <- transpileFuncBody body ((selfKeyword, TClass className) : argTypes)
     return (methodLabel className label, controlGraph)
 
+buildEdges :: ControlGraph -> ControlGraph
+buildEdges graph = graph
+    { graphEdges = edges
+    , graphRevertedEdges = revertedEdges
+    }
+        where
+            edgesFromBlock :: Block -> [Label]
+            edgesFromBlock block = case last block of
+                Goto label -> [label]
+                If _ label1 label2 -> [label1, label2]
+                _ -> []
+
+            edges, revertedEdges :: Map.Map Label [Label]
+            edges = Map.map edgesFromBlock $ graphData graph
+            revertedEdges = Map.fromListWith (++) $ concatMap (\(label, labels) -> map (\label' -> (label', [label])) labels) $ Map.toList edges
+
 transpileDef :: Abs.TopDef -> IntermediateMonad [(Label, ControlGraph)]
 transpileDef (Abs.TopFnDef _ (Abs.FnDef _ _ (Abs.Ident label) args body)) = do
     let argTypes = map (\(Abs.Arg _ t (Abs.Ident argName)) -> (argName, evalType t)) args
     controlGraph <- transpileFuncBody body argTypes
-    return $ return (label, controlGraph)
+    return $ return (label, buildEdges controlGraph)
 transpileDef (Abs.TopClassDef _ classTopDef) = do
     classDef <- asks (Map.lookup className . globalClasses . iEnvTypes) <&> \case
         Just classDef -> classDef
@@ -75,6 +91,7 @@ emptyGraph :: [VarName] -> ControlGraph
 emptyGraph args = ControlGraph
     { graphData = Map.empty
     , graphEdges = Map.empty
+    , graphRevertedEdges = Map.empty
     , graphEntry = initialLabel
     , graphArgs = args
     }
@@ -187,12 +204,6 @@ pushBlock = do
 setLabel :: Label -> ControlGraphMonad ()
 setLabel label = modifyFoldData (\s -> s { currentLabel = label })
 
-addEdges :: [(Label, [Label])] -> ControlGraphMonad ()
-addEdges edges = modifyFoldData (\s -> s
-    { currentGraph = (currentGraph s)
-        { graphEdges = foldr (\(k, v) m -> Map.insertWith (++) k v m) (graphEdges $ currentGraph s) edges
-        }
-    })
 
 newBlock :: Label -> ControlGraphMonad a -> ControlGraphMonad ()
 newBlock label prog = do
@@ -254,9 +265,6 @@ emitWhileLoop cond body = do
     label2 <- freshLabelsName
     label3 <- freshLabelsName
 
-    currentLabel' <- gets $ currentLabel . foldData
-    addEdges [(currentLabel', [label1]), (label1, [label2, label3]), (label2, [label1])]
-
     emit $ Goto label1
 
     newBlock label1 $ cond label2 label3
@@ -287,8 +295,6 @@ transpileStmt' (Abs.Cond _ expr stmt) = do
     label1 <- freshLabelsName
     label2 <- freshLabelsName
     transpileCondition expr label1 label2
-    currentLabel' <- gets $ currentLabel . foldData
-    addEdges [(currentLabel', [label1, label2]), (label1, [label2])]
 
     newBlock label1 $ do
         _ <- transpileStmt stmt
@@ -301,8 +307,6 @@ transpileStmt' (Abs.CondElse _ expr stmt1 stmt2) = do
     label2 <- freshLabelsName
     label3 <- freshLabelsName
     transpileCondition expr label1 label2
-    currentLabel' <- gets $ currentLabel . foldData
-    addEdges [(currentLabel', [label1, label2]), (label1, [label3]), (label2, [label3])]
 
     newBlock label1 $ do
         _ <- transpileStmt stmt1
@@ -539,29 +543,17 @@ transpileFuncApp funcCtor t funcName args = do
     createValue tmpName
 
 transpileCondition :: Abs.Expr -> Label -> Label -> ControlGraphMonad ()
-transpileCondition (Abs.ELitTrue _) trueLabel _ = do
-    currentLabel' <- gets $ currentLabel . foldData
-    addEdges [(currentLabel', [trueLabel])]
-    emit $ Goto trueLabel
-transpileCondition (Abs.ELitFalse _) _ falseLabel = do
-    currentLabel' <- gets $ currentLabel . foldData
-    addEdges [(currentLabel', [falseLabel])]
-    emit $ Goto falseLabel
+transpileCondition (Abs.ELitTrue _) trueLabel _ = emit $ Goto trueLabel
+transpileCondition (Abs.ELitFalse _) _ falseLabel = emit $ Goto falseLabel
 transpileCondition (Abs.Not _ expr) trueLabel falseLabel = transpileCondition expr falseLabel trueLabel
 transpileCondition (Abs.EAnd _ expr1 expr2) trueLabel falseLabel = do
     middleLabel <- freshLabelsName
     transpileCondition expr1 middleLabel falseLabel
     newBlock middleLabel $ transpileCondition expr2 trueLabel falseLabel
-
-    currentLabel' <- gets $ currentLabel . foldData
-    addEdges [(currentLabel', [middleLabel]), (middleLabel, [trueLabel, falseLabel])]
 transpileCondition (Abs.EOr _ expr1 expr2) trueLabel falseLabel = do
     middleLabel <- freshLabelsName
     transpileCondition expr1 trueLabel middleLabel
     newBlock middleLabel $ transpileCondition expr2 trueLabel falseLabel
-
-    currentLabel' <- gets $ currentLabel . foldData
-    addEdges [(currentLabel', [middleLabel]), (middleLabel, [trueLabel, falseLabel])]
 transpileCondition expr trueLabel falseLabel = do
     value <- transpileExpr expr
     emit $ If value trueLabel falseLabel
@@ -585,7 +577,6 @@ transpileExpr (Abs.EVar _ (Abs.Ident varName)) =
             emit $ Get tmpName self className varName
             createValue tmpName
         Nothing -> createValue varName
-
 transpileExpr (Abs.EAdd _ expr1 op expr2) = do
     value1 <- transpileExpr expr1
     value2 <- transpileExpr expr2
@@ -655,8 +646,6 @@ transpileExpr cond@Abs.EOr{} = do
         emit $ Assign tmpName (Constant 0)
         emit $ Goto nextLabel
 
-    addEdges [(trueLabel, [nextLabel]), (falseLabel, [nextLabel])]
-
     setLabel nextLabel
     return $ Variable tmpName
 transpileExpr cond@Abs.EAnd{} = do
@@ -673,8 +662,6 @@ transpileExpr cond@Abs.EAnd{} = do
     newBlock falseLabel $ do
         emit $ Assign tmpName (Constant 0)
         emit $ Goto nextLabel
-
-    addEdges [(trueLabel, [nextLabel]), (falseLabel, [nextLabel])]
 
     setLabel nextLabel
     return $ Variable tmpName
