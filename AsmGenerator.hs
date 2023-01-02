@@ -1,10 +1,11 @@
+{-# LANGUAGE LambdaCase #-}
 module AsmGenerator (generateAsmCode) where
 
 import Control.Monad (when)
 import Control.Monad.Identity (Identity (runIdentity))
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Reader (ReaderT (runReaderT))
-import Control.Monad.State (StateT (runStateT), modify)
+import Control.Monad.State (StateT (runStateT), modify, gets)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
@@ -46,11 +47,13 @@ initialEnv = Env {}
 
 data State = State
     { asmLines :: [AsmLine]
+    , usedBlocks :: Set.Set Label
     }
 
 initialState :: State
 initialState = State
     { asmLines = []
+    , usedBlocks = Set.empty
     }
 
 type FunctionBodyGenerator = ExceptT String (ReaderT Env (StateT State Identity))
@@ -113,10 +116,10 @@ generateClassData classes className classDef acc = if Map.member className acc t
         methods = Map.toList $ Map.union (Map.fromList $ zip (Map.keys (classMethods classDef)) (repeat className)) parentMethods
         (parentAcc, maybeParentData) = case parentClass classDef of
             Nothing -> (acc, Nothing)
-            Just parentName -> (parentAcc, Just parentData)
+            Just parentName -> (parentAcc', Just parentData)
                     where
-                        parentAcc = generateClassData classes parentName (classes Map.! parentName) acc
-                        parentData = parentAcc Map.! parentName
+                        parentAcc' = generateClassData classes parentName (classes Map.! parentName) acc
+                        parentData = parentAcc' Map.! parentName
         parentAttrs = maybe [] rawOffsets maybeParentData
         parentMethods = Map.fromList $ maybe [] rawVtable maybeParentData
 
@@ -191,12 +194,38 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                 generateFuncBody label controlGraph
             generateFuncBody :: Label -> ControlGraph -> FunctionBodyGenerator ()
             generateFuncBody funcName controlGraph = do
+                modify $ \s -> s { usedBlocks = Set.empty }
                 emitCmd "push rbp"
                 emitCmd "mov rbp, rsp"
                 emitCmd $ "sub rsp, " ++ show (8 * allVariablesLength)
                 generateArgs $ graphArgs controlGraph
-                mapM_ (uncurry generateBlock) (Map.toAscList blocks)
+                mapM_ (uncurry generateBlock) $ Map.toAscList blocks
                     where
+                        generateBlock :: Label -> Block -> FunctionBodyGenerator ()
+                        generateBlock label block = do
+                            gets (Set.member label . usedBlocks) >>= \case
+                                True -> return ()
+                                False -> do
+                                    modify $ \s -> s { usedBlocks = Set.insert label $ usedBlocks s }
+                                    usedBlocks' <- gets usedBlocks
+                                    case reverse block of
+                                        (If value label1 label2):block'
+                                            | not $ Set.member label2 usedBlocks' -> do
+                                            generateBlockBody label $ reverse block'
+                                            emitComment $ "if " ++ show value ++ " goto " ++ label2
+                                            generateIf value label2
+                                            emitEmptyLine
+                                            emitComment $ "else goto " ++ label1
+                                            generateBlock label1 $ graphData controlGraph Map.! label1
+                                        (Goto nextLabel):block'
+                                            | not $ Set.member nextLabel usedBlocks' -> do
+                                            generateBlockBody label $ reverse block'
+                                            emitComment $ "goto " ++ nextLabel
+                                            generateBlock nextLabel $ graphData controlGraph Map.! nextLabel
+                                        _ -> do
+                                            generateBlockBody label block
+                                            return ()
+
                         blocks = graphData controlGraph
                         allVariables = gatherAllVariables controlGraph
                         allVariablesLength = length allVariables
@@ -210,8 +239,10 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                             Just index -> index
                             Nothing -> error $ "Variable " ++ varName ++ " not found (asm)"
 
+                        qwordPtr :: String
+                        qwordPtr = "QWORD PTR "
                         varMemory :: String -> String
-                        varMemory varName = "QWORD PTR [rbp-" ++ show (varIndex varName) ++ "]"
+                        varMemory varName = qwordPtr ++ "[rbp-" ++ show (varIndex varName) ++ "]"
 
                         generateArgs :: [VarName] -> FunctionBodyGenerator ()
                         generateArgs args = generateArgs' argsRegisters (length args - length argsRegisters + 1) args
@@ -230,8 +261,8 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                                     emitCmd $ "mov " ++ varMemory arg ++ ", rax"
                                     generateArgs' [] (index - 1) as
 
-                        generateBlock :: Label -> Block -> FunctionBodyGenerator ()
-                        generateBlock label block = do
+                        generateBlockBody :: Label -> Block -> FunctionBodyGenerator ()
+                        generateBlockBody label block = do
                             emitLabel $ generateJmpLabel label
                             mapM_ generateStatementWithComment block
 
@@ -267,9 +298,9 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                             generateFunctionArgs values
                             case functionLabel of
                                     FunctionLabel _ -> return ()
-                                    MethodLabel className methodLabel -> do
-                                    emitCmd $ "mov rax, QWORD PTR [rdi]"
-                                    emitCmd $ "mov rax , QWORD PTR [rax+" ++ show (getMethodOffset className methodLabel) ++ "]"
+                                    MethodLabel className label -> do
+                                    emitCmd "mov rax, QWORD PTR [rdi]"
+                                    emitCmd $ "mov rax , QWORD PTR [rax+" ++ show (getMethodOffset className label) ++ "]"
                             emitFunctionCall (callLabel functionLabel) (max (length values - length argsRegisters) 0 + stackAligment)
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                                 where
@@ -296,10 +327,26 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                                                 emitCmd ("mov " ++ reg ++ ", " ++ generateValue value)
                                                 generateFunctionArgs' regs i vs
 
+                        generateIf :: Value -> Label -> FunctionBodyGenerator ()
+                        generateIf value falseLabel = do
+                            emitCmd $ "mov rax, " ++ generateValue value
+                            emitCmd "test rax, rax"
+                            emitCmd $ "je " ++ generateJmpLabel falseLabel
+
+                        emitValue :: String -> Value -> FunctionBodyGenerator String
+                        emitValue register (Variable value) = do
+                            emitCmd $ "mov " ++ register ++ ", " ++ varMemory value
+                            return register
+                        emitValue register (Object value) = do
+                            emitCmd $ "mov " ++ register ++ ", " ++ varMemory value
+                            return register
+                        emitValue _ (Constant value) = do
+                            return $ show value
+
                         generateStatement :: Statement -> FunctionBodyGenerator ()
                         generateStatement (Assign varName value) = do
-                            emitCmd $ "mov rax, " ++ generateValue value
-                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                            var <- emitValue "rax" value
+                            emitCmd $ "mov " ++ varMemory varName ++ ", " ++ var
                         generateStatement (AssignString varName str) = do
                             emitCmd $ "lea rdi, [rip+" ++ generateStringLabel str ++ "]"
                             emitFunctionCall "__copyString" 1
@@ -352,9 +399,7 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                         generateStatement (Goto label) =
                             emitCmd $ "jmp " ++ generateJmpLabel label
                         generateStatement (If value label1 label2) = do
-                            emitCmd $ "mov rax, " ++ generateValue value
-                            emitCmd "cmp rax, 0"
-                            emitCmd $ "je " ++ generateJmpLabel label2
+                            generateIf value label2
                             emitCmd $ "jmp " ++ generateJmpLabel label1
                         generateStatement (AddRef varName) = do
                             emitCmd $ "mov rdi, " ++ varMemory varName
@@ -402,8 +447,8 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                         generateStatement (Self varName) = do
                             emitCmd $ "mov rax, " ++ generateValue (Object selfKeyword)
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
-                        generateStatement (CallMethod varName self className methodLabel values) =
-                            generateFunctionCall varName (MethodLabel className methodLabel) (self : values)
+                        generateStatement (CallMethod varName self className label values) =
+                            generateFunctionCall varName (MethodLabel className label) (self : values)
 
 
                         emitFunctionCall :: String -> Int -> FunctionBodyGenerator ()
