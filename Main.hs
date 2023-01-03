@@ -15,6 +15,7 @@ import TypeChecker  ( runTypeChecker, typeChecker, emptyTEnv )
 import Intermediate ( transpile, runIntermediateMonad )
 import Common       ( (.>) )
 import AsmGenerator (generateAsmCode)
+import qualified Optimalizations
 import qualified SSA
 import qualified RemoveSSA
 
@@ -27,12 +28,14 @@ data CmdOptions = CmdOptions
   , optOnlyTypeChecker :: Bool
   , optDebug :: Bool
   , optUnknown :: Bool
+  , optOFlag :: Int
   }
 
 data CompileOptions = CompileOptions
   { compileOptionFileName :: String
   , compileOptionOnlyTypeChecker :: Bool
   , compileOptionDebug :: Bool
+  , compileOptionOFlag :: Optimalizations.OptimalizationLevel
   }
 
 
@@ -50,10 +53,17 @@ execProgram options parsed =
         Left err -> do
           error err
         Right intermediate -> do
-          when (compileOptionDebug options) $ print intermediate
+          -- when (compileOptionDebug options) $ print intermediate
 
           let ssa = SSA.transform intermediate
-          let withoutSSA = RemoveSSA.transform ssa
+
+          let optimized = Optimalizations.run (compileOptionOFlag options) ssa
+
+          -- when (compileOptionDebug options) $ print ssa
+          -- exitFailure
+
+          let withoutSSA = RemoveSSA.transform optimized
+          when (compileOptionDebug options) $ print withoutSSA
           unless (RemoveSSA.check withoutSSA) $ do
             printStdErr "ERROR"
             print ssa
@@ -74,19 +84,21 @@ execProgram options parsed =
 
 main :: IO ()
 main = getArgs >>= (\case
-  CmdOptions True _ _ _ _ -> usage >> exitSuccess
-  CmdOptions _ Nothing _ _ _ -> usage >> exitFailure
-  CmdOptions _ _ _ _ True -> usage >> exitFailure
-  CmdOptions _ (Just f) onlyTypeChecker debug _ -> runFile (CompileOptions f onlyTypeChecker debug)) . getCmdOptions
+  CmdOptions True _ _ _ _ _ -> usage >> exitSuccess
+  CmdOptions _ Nothing _ _ _ _ -> usage >> exitFailure
+  CmdOptions _ _ _ _ True _ -> usage >> exitFailure
+  CmdOptions _ (Just f) onlyTypeChecker debug _ oflag -> runFile (CompileOptions f onlyTypeChecker debug oflag)) . getCmdOptions
 
 
 getCmdOptions :: [String] -> CmdOptions
-getCmdOptions = foldr getOpt (CmdOptions False Nothing False False False)
+getCmdOptions = foldr getOpt (CmdOptions False Nothing False False False Optimalizations.defaultLevel)
   where
     getOpt :: String -> CmdOptions -> CmdOptions
     getOpt "--help" opt = opt { optHelp = True }
     getOpt "--typechecker" opt = opt { optOnlyTypeChecker = True }
     getOpt "--debug" opt = opt { optDebug = True }
+    getOpt "-O0" opt = opt { optOFlag = 0 }
+    getOpt "-O1" opt = opt { optOFlag = 1 }
     getOpt ('-':_) opt = opt { optUnknown = True }
     getOpt f opt = opt { optFile = Just f }
 

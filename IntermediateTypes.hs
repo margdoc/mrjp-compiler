@@ -24,7 +24,7 @@ data Value = Constant Int
 instance Show Value where
     show (Constant int) = show int
     show (Variable varName) = varName
-    show (Object varName) = varName
+    show (Object varName) = '&' : varName
 
 type Label = String
 
@@ -245,3 +245,19 @@ mapNames f = \case
     AddRef varName -> AddRef (f varName)
     RemoveRef varName -> RemoveRef (f varName)
     Self varName -> Self (f varName)
+
+buildEdges :: ControlGraph -> ControlGraph
+buildEdges graph = graph
+    { graphEdges = edges
+    , graphRevertedEdges = revertedEdges
+    }
+        where
+            edgesFromBlock :: Block -> [Label]
+            edgesFromBlock block = case last block of
+                Goto label -> [label]
+                If _ label1 label2 -> [label1, label2]
+                _ -> []
+
+            edges, revertedEdges :: Map.Map Label [Label]
+            edges = Map.map edgesFromBlock $ graphData graph
+            revertedEdges = Map.fromListWith (++) $ concatMap (\(label, labels) -> map (\label' -> (label', [label])) labels) $ Map.toList edges

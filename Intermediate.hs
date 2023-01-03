@@ -11,7 +11,7 @@ import qualified Data.Map as Map
 import qualified Grammar.Abs as Abs
 
 import TypeCheckerTypes ( Type (..), GlobalTypes (..), FuncDef (..), ClassDef (..) )
-import IntermediateTypes ( Program, Label, ControlGraph (..), VarName, Block, Statement (..), Value (..), BinaryOpType (..), UnaryOpType (..), methodLabel )
+import IntermediateTypes ( Program, Label, ControlGraph (..), VarName, Block, Statement (..), Value (..), BinaryOpType (..), UnaryOpType (..), methodLabel, buildEdges )
 import TypeChecker (selfKeyword)
 
 type IntermediateMonad = ExceptT String (ReaderT IEnv IO)
@@ -44,22 +44,6 @@ transpileMethodDef className (Abs.FnDef _ _ (Abs.Ident label) args body) = do
     let argTypes = map (\(Abs.Arg _ t (Abs.Ident argName)) -> (argName, evalType t)) args
     controlGraph <- transpileFuncBody body ((selfKeyword, TClass className) : argTypes)
     return (methodLabel className label, controlGraph)
-
-buildEdges :: ControlGraph -> ControlGraph
-buildEdges graph = graph
-    { graphEdges = edges
-    , graphRevertedEdges = revertedEdges
-    }
-        where
-            edgesFromBlock :: Block -> [Label]
-            edgesFromBlock block = case last block of
-                Goto label -> [label]
-                If _ label1 label2 -> [label1, label2]
-                _ -> []
-
-            edges, revertedEdges :: Map.Map Label [Label]
-            edges = Map.map edgesFromBlock $ graphData graph
-            revertedEdges = Map.fromListWith (++) $ concatMap (\(label, labels) -> map (\label' -> (label', [label])) labels) $ Map.toList edges
 
 transpileDef :: Abs.TopDef -> IntermediateMonad [(Label, ControlGraph)]
 transpileDef (Abs.TopFnDef _ (Abs.FnDef _ _ (Abs.Ident label) args body)) = do
@@ -396,10 +380,10 @@ setType varName t = do
     cEnvVariablesValues' <- asks cEnvVariablesValues
     let newVarName = case Map.lookup varName cEnvVariablesValues' of
             Nothing -> varName
-            Just varName' -> varName' ++ "$"
+            Just varName' -> varName' ++ "#"
 
     addNewVariable newVarName t'
-    return (\env -> env { cEnvVariablesValues = Map.insert varName newVarName (cEnvVariablesValues env) }, newVarName)
+    return (\env -> env { cEnvVariablesValues = Map.insert varName newVarName cEnvVariablesValues' }, newVarName)
 
 getClassName :: Value -> ControlGraphMonad VarName
 getClassName value = getTypeFromValue value <&> \case
@@ -428,7 +412,9 @@ emitAddRefIfObject = \case
 transpileDecl' :: Abs.Type -> VarName -> Value -> ControlGraphMonad (CEnv -> CEnv)
 transpileDecl' t varName value = do
     (envChange, varName') <- setType varName t
-    emit $ Assign varName' value
+    case (evalType t, value) of
+        (TString, Constant _) -> emit $ AssignString varName' ""
+        _ -> emit $ Assign varName' value
     if isObject $ evalType t
         then do
             emit $ AddRef varName'
@@ -489,7 +475,7 @@ transpileLValue (Abs.LValue _ (Abs.EVar _ (Abs.Ident varName))) =
         Just _ -> do
             self <- getSelf
             return $ LValueAttr self varName
-        _ -> return $ LValue varName
+        _ -> currentVarName varName <&> LValue
 transpileLValue (Abs.LValue _ (Abs.EArrayElem _ expr1 expr2)) = do
     value1 <- transpileExpr expr1
     value2 <- transpileExpr expr2
@@ -558,6 +544,8 @@ transpileCondition expr trueLabel falseLabel = do
     value <- transpileExpr expr
     emit $ If value trueLabel falseLabel
 
+currentVarName :: VarName -> ControlGraphMonad VarName
+currentVarName varName = asks $ (Map.! varName) . cEnvVariablesValues
 
 transpileExpr :: Abs.Expr -> ControlGraphMonad Value
 transpileExpr (Abs.ELitInt _ i) = return $ Constant $ fromInteger i
@@ -576,7 +564,7 @@ transpileExpr (Abs.EVar _ (Abs.Ident varName)) =
             className <- getClassName self
             emit $ Get tmpName self className varName
             createValue tmpName
-        Nothing -> createValue varName
+        Nothing -> currentVarName varName >>= createValue
 transpileExpr (Abs.EAdd _ expr1 op expr2) = do
     value1 <- transpileExpr expr1
     value2 <- transpileExpr expr2
