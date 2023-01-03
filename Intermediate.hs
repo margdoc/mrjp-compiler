@@ -513,20 +513,25 @@ transpileMethodApp object funcName args = do
         _ -> error "transpileMethodApp: Class not found"
     transpileFuncApp (\tmp -> CallMethod tmp object className) funcReturnType' funcName args
 
-transpileFuncApp :: (VarName -> Label -> [Value] -> Statement) -> Type -> Label -> [Value] -> ControlGraphMonad Value
+transpileFuncApp :: (Maybe VarName -> Label -> [Value] -> Statement) -> Type -> Label -> [Value] -> ControlGraphMonad Value
 transpileFuncApp funcCtor t funcName args = do
-    tmpName <- getNewVariable t
+    tmp <- case t of
+        TVoid -> return Nothing
+        _ -> getNewVariable t <&> Just
 
     mapM_ (\case
         Object varName -> do
             emit $ AddRef varName
             addToDestruct varName
         _ -> return ()) args
-    -- TODO: procedures
-    emit $ funcCtor tmpName funcName args
-    when (isObject t) $ addToDestruct tmpName
 
-    createValue tmpName
+    emit $ funcCtor tmp funcName args
+
+    case tmp of
+        Nothing -> return $ Constant 0
+        Just tmpName -> do
+            when (isObject t) $ addToDestruct tmpName
+            createValue tmpName
 
 transpileCondition :: Abs.Expr -> Label -> Label -> ControlGraphMonad ()
 transpileCondition (Abs.ELitTrue _) trueLabel _ = emit $ Goto trueLabel

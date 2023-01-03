@@ -285,7 +285,7 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                             generateStatement statement
                             emitEmptyLine
 
-                        generateFunctionCall :: VarName -> FunctionLabel -> [Value] -> FunctionBodyGenerator ()
+                        generateFunctionCall :: Maybe VarName -> FunctionLabel -> [Value] -> FunctionBodyGenerator ()
                         generateFunctionCall varName functionLabel values = do
                             generateFunctionArgs values
                             case functionLabel of
@@ -294,7 +294,9 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                                     emitCmd "mov rax, QWORD PTR [rdi]"
                                     emitCmd $ "mov rax , QWORD PTR [rax+" ++ show (getMethodOffset className label) ++ "]"
                             emitFunctionCall (callLabel functionLabel) (max (length values - length argsRegisters) 0 + stackAligment)
-                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                            case varName of
+                                Just var -> emitCmd $ "mov " ++ varMemory var ++ ", rax"
+                                Nothing -> return ()
                                 where
                                     callLabel :: FunctionLabel -> String
                                     callLabel (FunctionLabel label) = label
@@ -354,6 +356,22 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                             emitCmd $ "mov rdi, " ++ generateValue value1
                             emitCmd $ "mov rsi, " ++ generateValue value2
                             emitFunctionCall "__concat" 2
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (BinaryOp op varName value1 (Constant 1)) | op == Add = do
+                            emitCmd $ "mov rax, " ++ generateValue value1
+                            emitCmd "inc rax"
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (BinaryOp op varName (Constant 1) value2) | op == Add = do
+                            emitCmd $ "mov rax, " ++ generateValue value2
+                            emitCmd "inc rax"
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (BinaryOp op varName value1 (Constant 1)) | op == Sub = do
+                            emitCmd $ "mov rax, " ++ generateValue value1
+                            emitCmd "dec rax"
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (BinaryOp op varName (Constant 1) value2) | op == Sub = do
+                            emitCmd $ "mov rax, " ++ generateValue value2
+                            emitCmd "dec rax"
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (BinaryOp op varName value1 value2) | op `elem` [Add, Sub, Mul] = do
                             emitCmd $ "mov rax, " ++ generateValue value1
@@ -466,3 +484,7 @@ gatherAllVariables graph = Set.toList $ foldr (flip $ foldr gatherVariables) (Se
     where
         gatherVariables :: Statement -> Set.Set String -> Set.Set String
         gatherVariables stmt = maybe id Set.insert (fst $ varNames stmt)
+
+isValue :: VarName -> Value -> Bool
+isValue varName (Variable varName') = varName == varName'
+isValue _ _ = False

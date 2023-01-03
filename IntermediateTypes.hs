@@ -4,7 +4,6 @@ module IntermediateTypes where
 import BasePrelude (intercalate, mapMaybe)
 import Control.Monad.RWS ( RWS )
 import qualified Data.Map as Map
-import qualified Data.Set as Set
 
 type Compiler a = RWS Env Output State (IO a)
 
@@ -58,6 +57,7 @@ instance Show BinaryOpType where
 
 data UnaryOpType = Not
                  | Neg
+                 deriving (Eq)
 
 instance Show UnaryOpType where
     show Not = "!"
@@ -77,13 +77,14 @@ data Statement = BinaryOp BinaryOpType VarName Value Value
                | Self VarName
                | Assign VarName Value
                | AssignString VarName String
-               | Call VarName Label [Value]   -- function_label arguments...
-               | CallMethod VarName Value VarName Label [Value]
+               | Call (Maybe VarName) Label [Value]   -- function_label arguments...
+               | CallMethod (Maybe VarName) Value VarName Label [Value]
                | Goto Label
                | Return Value
                | VReturn
                | AddRef VarName
                | RemoveRef VarName
+                deriving (Eq)
 
 instance Show Statement where
     show (BinaryOp op varName value1 value2) = varName ++ " = " ++ show value1 ++ " " ++ show op ++ " " ++ show value2
@@ -99,8 +100,10 @@ instance Show Statement where
     show (AllocObject varName string) = varName ++ " = new " ++ string
     show (Assign varName value) = varName ++ " = " ++ show value
     show (AssignString varName string) = varName ++ " = " ++ show string
-    show (Call varName functionLabel values) = varName ++ " = " ++ functionLabel ++ "(" ++ intercalate ", " (map show values) ++ ")"
-    show (CallMethod varName value className varName' values) = varName ++ " = " ++ show value ++ "." ++ className ++ "." ++ varName' ++ "(" ++ intercalate ", " (map show values) ++ ")"
+    show (Call Nothing functionLabel values) = functionLabel ++ "(" ++ intercalate ", " (map show values) ++ ")"
+    show (Call (Just varName) functionLabel values) = varName ++ " = " ++ functionLabel ++ "(" ++ intercalate ", " (map show values) ++ ")"
+    show (CallMethod Nothing value className varName' values) = show value ++ "." ++ className ++ "." ++ varName' ++ "(" ++ intercalate ", " (map show values) ++ ")"
+    show (CallMethod (Just varName) value className varName' values) = varName ++ " = " ++ show value ++ "." ++ className ++ "." ++ varName' ++ "(" ++ intercalate ", " (map show values) ++ ")"
     show (Goto label) = "goto " ++ label
     show (Return value) = "return " ++ show value
     show VReturn = "return"
@@ -117,6 +120,7 @@ data ControlGraph = ControlGraph
     , graphEntry :: Label
     , graphArgs :: [VarName]
     }
+    deriving (Eq)
 
 instance Show ControlGraph where
     show (ControlGraph graphData' graphEdges' graphRevertedEdges' graphEntry' args) =
@@ -153,8 +157,8 @@ varNames (Set value _ _ value') = (Nothing, mapMaybe varNameFromValue [value, va
 varNames (AllocObject varName _) = (Just varName, [])
 varNames (Assign varName value) = (Just varName, mapMaybe varNameFromValue [value])
 varNames (AssignString varName _) = (Just varName, [])
-varNames (Call varName _ values) = (Just varName, mapMaybe varNameFromValue values)
-varNames (CallMethod varName value _ _ values) = (Just varName, mapMaybe varNameFromValue (value:values))
+varNames (Call varName _ values) = (varName, mapMaybe varNameFromValue values)
+varNames (CallMethod varName value _ _ values) = (varName, mapMaybe varNameFromValue (value:values))
 varNames (Goto _) = (Nothing, [])
 varNames (Return value) = (Nothing, mapMaybe varNameFromValue [value])
 varNames VReturn = (Nothing, [])
@@ -207,8 +211,8 @@ renameOutput oldName newName = \case
     AllocObject varName string -> AllocObject (rename oldName newName varName) string
     Assign varName value -> Assign (rename oldName newName varName) value
     AssignString varName string -> AssignString (rename oldName newName varName) string
-    Call varName functionLabel values -> Call (rename oldName newName varName) functionLabel values
-    CallMethod varName value className varName' values -> CallMethod (rename oldName newName varName) value className varName' values
+    Call varName functionLabel values -> Call (fmap (rename oldName newName) varName) functionLabel values
+    CallMethod varName value className varName' values -> CallMethod (fmap (rename oldName newName) varName) value className varName' values
     Goto label -> Goto label
     Return value -> Return value
     VReturn -> VReturn
@@ -237,8 +241,8 @@ mapNames f = \case
     AllocObject varName string -> AllocObject (f varName) string
     Assign varName value -> Assign (f varName) (mapValueName f value)
     AssignString varName string -> AssignString (f varName) string
-    Call varName functionLabel values -> Call (f varName) functionLabel (map (mapValueName f) values)
-    CallMethod varName value className varName' values -> CallMethod (f varName) (mapValueName f value) className varName' (map (mapValueName f) values)
+    Call varName functionLabel values -> Call (fmap f varName) functionLabel (map (mapValueName f) values)
+    CallMethod varName value className varName' values -> CallMethod (fmap f varName) (mapValueName f value) className varName' (map (mapValueName f) values)
     Goto label -> Goto label
     Return value -> Return (mapValueName f value)
     VReturn -> VReturn
