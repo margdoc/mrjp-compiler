@@ -27,7 +27,7 @@ typedef long counterType;
 
 char* __copyString(char*);
 
-char* readString() {
+void* readString() {
     char* s = NULL;
     size_t len = 0;
     ssize_t read = getline(&s, &len, stdin);
@@ -35,7 +35,9 @@ char* readString() {
         error();
     }
     s[read - 1] = '\0';
-    return __copyString(s);
+    void* string = __copyString(s);
+    free(s);
+    return string;
 }
 
 void* __alloc(int size) {
