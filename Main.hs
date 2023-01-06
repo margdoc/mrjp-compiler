@@ -57,10 +57,10 @@ execProgram options parsed =
 
           let ssa = SSA.transform intermediate
 
-          let optimized = Optimalizations.run (compileOptionOFlag options) ssa
-
           -- when (compileOptionDebug options) $ print ssa
           -- exitFailure
+
+          let optimized = Optimalizations.run (compileOptionOFlag options) ssa
 
           let withoutSSA = RemoveSSA.transform optimized
           when (compileOptionDebug options) $ print withoutSSA
