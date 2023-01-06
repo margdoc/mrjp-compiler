@@ -61,18 +61,26 @@ transformBlocks controlGraph blocks = Map.mapWithKey (\label (block, _, _) -> re
         variablesInBlocks :: Map.Map Label (Block, Map.Map VarName Int, [VarName])
         variablesInBlocks = Map.mapWithKey gatherAllVariables blocks
 
-        importedVariables :: Map.Map Label (Map.Map VarName (Set.Set (Label, Int)))
-        importedVariables = Map.mapWithKey (\label (_, _, missing) -> Map.fromList $ map (\v -> (v, dfsImportVariables label v Set.empty Set.empty)) missing) variablesInBlocks
+        importedVariables :: Map.Map Label (Map.Map VarName (Map.Map Label (Label, Int)))
+        importedVariables = Map.mapWithKey (\label (_, _, missing) -> Map.fromList $ map (\v -> (v, dfsImportVariables label v Set.empty Map.empty)) missing) variablesInBlocks
 
-        dfsImportVariables :: Label -> VarName -> Set.Set Label -> Set.Set (Label, Int) -> Set.Set (Label, Int)
+        dfsImportVariables, dfsImportVariables' :: Label -> VarName -> Set.Set Label -> Map.Map Label (Label, Int) -> Map.Map Label (Label, Int)
         dfsImportVariables label varName visited acc' = if Set.member label visited
             then acc'
             else foldr (\label' acc ->
                 case Map.lookup varName ((\(_, a, _) -> a) $ variablesInBlocks Map.! label') of
-                    Just i -> Set.insert (label', i) acc
+                    Just i -> Map.insert label' (label', i) acc
                     Nothing -> if varName `elem` (\(_, _, a) -> a) (variablesInBlocks Map.! label')
-                        then Set.insert (label', 0) acc
-                        else dfsImportVariables label' varName (Set.insert label visited) acc
+                        then Map.insert label (label', 0) acc
+                        else dfsImportVariables' label' varName (Set.insert label visited) acc
+                ) acc' $ Map.findWithDefault [] label (graphRevertedEdges controlGraph)
+
+        dfsImportVariables' label varName visited acc' = if Set.member label visited
+            then acc'
+            else foldr (\label' acc ->
+                case Map.lookup varName ((\(_, a, _) -> a) $ variablesInBlocks Map.! label') of
+                    Just i -> Map.insert label' (label', i) acc
+                    Nothing -> dfsImportVariables' label' varName (Set.insert label visited) acc
                 ) acc' $ Map.findWithDefault [] label (graphRevertedEdges controlGraph)
 
         replaceVariable :: Label -> Block -> Block
@@ -80,8 +88,8 @@ transformBlocks controlGraph blocks = Map.mapWithKey (\label (block, _, _) -> re
             where
                 phiStatements = map (\varName ->
                         Phi (variableVersionName label varName 0) $
-                            map (\(label', version) -> (Variable $ variableVersionName label' varName version, label'))
-                                $ Set.toList $ Map.findWithDefault Set.empty varName $ importedVariables Map.! label
+                            map (\(labelFrom, (label', version)) -> (Variable $ variableVersionName label' varName version, labelFrom))
+                                $ Map.toList $ Map.findWithDefault Map.empty varName $ importedVariables Map.! label
                     ) $ (\(_, _, a) -> a) $ variablesInBlocks Map.! label
                 block' = map (\stmt -> foldr (\varName stmt' -> let newName = variableVersionName label varName 0 in
                             if elem varName $ (\(_, _, a) -> a) $ variablesInBlocks Map.! label
