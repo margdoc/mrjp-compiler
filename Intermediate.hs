@@ -131,31 +131,18 @@ initialEnv argTypes types = CEnv
 
 type ControlGraphMonad = ExceptT String (ReaderT CEnv (StateT ControlGraphState IO))
 
-freshTmpNames :: Int -> ControlGraphMonad [VarName]
-freshTmpNames k = do
-    (varNames, newFreshVarNames) <- gets (splitAt k . freshVarNames)
-    modify (\s -> s { freshVarNames = newFreshVarNames })
-    return varNames
 
 freshTmpName :: ControlGraphMonad VarName
 freshTmpName = do
-    tmpNames <- freshTmpNames 1
-    if length tmpNames /= 1
-        then throwError "TODO XD freshTmpName"
-        else return $ head tmpNames
-
-freshLabelsNames:: Int -> ControlGraphMonad [Label]
-freshLabelsNames k = do
-    (labelsNames, newFreshLabels) <- gets (splitAt k . freshLabels)
-    modify (\s -> s { freshLabels = newFreshLabels })
-    return labelsNames
+    (varName : newFreshVarNames) <- gets freshVarNames
+    modify (\s -> s { freshVarNames = newFreshVarNames })
+    return varName
 
 freshLabelsName :: ControlGraphMonad Label
 freshLabelsName = do
-    labelsNames <- freshLabelsNames 1
-    if length labelsNames /= 1
-        then throwError "TODO XD freshTmpName"
-        else return $ head labelsNames
+    (labelName : newFreshLabels) <- gets freshLabels
+    modify (\s -> s { freshLabels = newFreshLabels })
+    return labelName
 
 
 runControlGraphMonad :: [(VarName, Type)] -> ControlGraphMonad () -> IntermediateMonad ControlGraph

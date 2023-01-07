@@ -93,7 +93,7 @@ run = Map.map runForGraph
         calcBinaryOp Add = (+)
         calcBinaryOp Sub = (-)
         calcBinaryOp Mul = (*)
-        calcBinaryOp Div = div -- TODO check for zero
+        calcBinaryOp Div = div
         calcBinaryOp Mod = mod
         calcBinaryOp Equal = \x y -> if x == y then 1 else 0
         calcBinaryOp NotEqual = \x y -> if x /= y then 1 else 0

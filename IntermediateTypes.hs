@@ -18,7 +18,7 @@ type VarName = String
 data Value = Constant Int
            | Variable VarName
            | Object VarName
-           deriving (Eq)
+           deriving (Eq, Ord)
 
 instance Show Value where
     show (Constant int) = show int
@@ -39,7 +39,7 @@ data BinaryOpType = Add
                   | Greater
                   | GreaterEqual
                   | Concat
-                  deriving (Eq)
+                  deriving (Eq, Ord)
 
 instance Show BinaryOpType where
     show Add = "+"
@@ -57,7 +57,7 @@ instance Show BinaryOpType where
 
 data UnaryOpType = Not
                  | Neg
-                 deriving (Eq)
+                 deriving (Eq, Ord)
 
 instance Show UnaryOpType where
     show Not = "!"

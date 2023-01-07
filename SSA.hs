@@ -135,8 +135,8 @@ transformBlocks controlGraph' blocks = Map.mapWithKey (\label _ -> replaceVariab
 
         finalPhis :: Phis
         finalBlocks :: Map.Map Label Block
-        -- (finalPhis, finalBlocks) = removePhisUntilFixedPoint initialPhis (Map.map (\(b, _, _) -> b) variablesInBlocks)
-        (finalPhis, finalBlocks) = (initialPhis, (Map.map (\(b, _, _) -> b) variablesInBlocks))
+        (finalPhis, finalBlocks) = removePhisUntilFixedPoint initialPhis (Map.map (\(b, _, _) -> b) variablesInBlocks)
+        -- (finalPhis, finalBlocks) = (initialPhis, Map.map (\(b, _, _) -> b) variablesInBlocks)
 
         replaceVariable :: Label -> Block
         replaceVariable label = phiStatements ++ finalBlocks Map.! label
