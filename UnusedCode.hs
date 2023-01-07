@@ -14,7 +14,7 @@ run :: Program -> Program
 run = Map.map removeUnusedBlocks
     where
         removeUnusedBlocks :: ControlGraph -> ControlGraph
-        removeUnusedBlocks graph = buildEdges $ removeUnreachableBlocks $ buildEdges $ graph
+        removeUnusedBlocks graph = buildEdges $ graph
             { graphData = Map.map removeUnusedStatements $ graphData graph
             }
 

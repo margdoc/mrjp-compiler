@@ -6,24 +6,28 @@ import IntermediateTypes (Program)
 
 import qualified UnusedCode
 import qualified ConstantPropagation
+import qualified LCSE_GCSE
 
 type OptimalizationLevel = Int
 
 defaultLevel :: OptimalizationLevel
-defaultLevel = 1
+defaultLevel = 2
 
 data Optimalization = UnusedCode
                     | ConstantPropagation
+                    | LCSE_GCSE
 
 optimalizationLevels :: Map.Map OptimalizationLevel [Optimalization]
 optimalizationLevels = Map.fromList
     [ (0, [])
     , (1, [UnusedCode, ConstantPropagation])
+    , (2, [UnusedCode, ConstantPropagation, LCSE_GCSE])
     ]
 
 runOptimalization :: Optimalization -> Program -> (Program, Bool)
 runOptimalization UnusedCode program = (UnusedCode.run program, False)
 runOptimalization ConstantPropagation program = (ConstantPropagation.run program, False)
+runOptimalization LCSE_GCSE program = (LCSE_GCSE.run program, False)
 
 
 run :: OptimalizationLevel -> Program -> Program

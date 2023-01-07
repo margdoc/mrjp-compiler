@@ -4,9 +4,8 @@ module SSA where
 
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import Data.Maybe (fromJust)
 
-import IntermediateTypes (Program, ControlGraph (..), Label, Block, VarName, Statement (..), Value (..), varNames, renameOutput, mapNames, varNameFromValue)
+import IntermediateTypes (Program, ControlGraph (..), Label, Block, VarName, Statement (..), Value (..), varNames, renameOutput, mapNames, buildEdges)
 
 
 transform :: Program -> Program
@@ -17,9 +16,13 @@ transformFunction controlGraph = controlGraph
     { graphData = transformBlocks controlGraph $ graphData controlGraph
     }
 
+type Phis = Map.Map Label (Map.Map VarName (Map.Map Label (Label, Int)))
+
 transformBlocks :: ControlGraph -> Map.Map Label Block -> Map.Map Label Block
-transformBlocks controlGraph blocks = Map.mapWithKey (\label (block, _, _) -> replaceVariable label block) variablesInBlocks
+transformBlocks controlGraph' blocks = Map.mapWithKey (\label _ -> replaceVariable label) variablesInBlocks
     where
+        controlGraph = buildEdges controlGraph'
+
         variableVersionName :: Label -> VarName -> Int -> VarName
         variableVersionName label varName version = varName ++ "@" ++ label ++ "^" ++ show version
 
@@ -55,59 +58,96 @@ transformBlocks controlGraph blocks = Map.mapWithKey (\label (block, _, _) -> re
 
                         newStmt' = foldr (\varName stmt' -> case Map.lookup varName defined' of
                                 Just version -> replaceVariableInStatement varName version stmt'
-                                Nothing -> stmt'
+                                Nothing -> if Set.member varName newMissing then replaceVariableInStatement varName 0 stmt' else stmt'
                             ) newStmt $ snd varNames'
 
         variablesInBlocks :: Map.Map Label (Block, Map.Map VarName Int, [VarName])
         variablesInBlocks = Map.mapWithKey gatherAllVariables blocks
 
-        importedVariables :: Map.Map Label (Map.Map VarName (Map.Map Label (Label, Int)))
-        importedVariables = Map.mapWithKey (\label (_, _, missing) -> Map.fromList $ map (\v -> (v, dfsImportVariables label v Set.empty Map.empty)) missing) variablesInBlocks
+        -- importedVariables :: Map.Map Label (Map.Map VarName (Map.Map Label (Label, Int)))
+        -- importedVariables = Map.mapWithKey (\label (_, _, missing) -> Map.fromList $ map (\v -> (v, dfsImportVariables label v Set.empty Map.empty)) missing) variablesInBlocks
 
-        dfsImportVariables, dfsImportVariables' :: Label -> VarName -> Set.Set Label -> Map.Map Label (Label, Int) -> Map.Map Label (Label, Int)
-        dfsImportVariables label varName visited acc' = if Set.member label visited
-            then acc'
-            else foldr (\label' acc ->
-                case Map.lookup varName ((\(_, a, _) -> a) $ variablesInBlocks Map.! label') of
-                    Just i -> Map.insert label' (label', i) acc
-                    Nothing -> if varName `elem` (\(_, _, a) -> a) (variablesInBlocks Map.! label')
-                        then Map.insert label (label', 0) acc
-                        else dfsImportVariables' label' varName (Set.insert label visited) acc
-                ) acc' $ Map.findWithDefault [] label (graphRevertedEdges controlGraph)
+        -- dfsImportVariables :: Label -> VarName -> Set.Set Label -> Map.Map Label (Label, Int) -> Map.Map Label (Label, Int)
+        -- dfsImportVariables label varName visited acc' = if Set.member label visited
+        --     then acc'
+        --     else foldr (\label' acc ->
+        --         case Map.lookup varName ((\(_, a, _) -> a) $ variablesInBlocks Map.! label') of
+        --             Just i -> Map.insert label' (label', i) acc
+        --             Nothing -> if varName `elem` (\(_, _, a) -> a) (variablesInBlocks Map.! label')
+        --                 then if Map.size precursorAcc == 1 then Map.union precursorAcc acc else Map.insert label (label', 0) acc
+        --                 else dfsImportVariables' label' label' varName (Set.insert label visited) acc
+        --                     where
+        --                         precursorAcc = dfsImportVariables' label' label' varName (Set.insert label visited) Map.empty
 
-        dfsImportVariables' label varName visited acc' = if Set.member label visited
-            then acc'
-            else foldr (\label' acc ->
-                case Map.lookup varName ((\(_, a, _) -> a) $ variablesInBlocks Map.! label') of
-                    Just i -> Map.insert label' (label', i) acc
-                    Nothing -> dfsImportVariables' label' varName (Set.insert label visited) acc
-                ) acc' $ Map.findWithDefault [] label (graphRevertedEdges controlGraph)
+        --         ) acc' $ Map.findWithDefault [] label (graphRevertedEdges controlGraph)
 
-        replaceVariable :: Label -> Block -> Block
-        replaceVariable label block = nonSingletonPhis ++ block''
+        -- dfsImportVariables' :: Label -> Label -> VarName -> Set.Set Label -> Map.Map Label (Label, Int) -> Map.Map Label (Label, Int)
+        -- dfsImportVariables' basicLabel label varName visited acc' = if Set.member label visited
+        --     then acc'
+        --     else foldr (\label' acc ->
+        --         case Map.lookup varName ((\(_, a, _) -> a) $ variablesInBlocks Map.! label') of
+        --             Just i -> Map.insert label' (label', i) acc
+        --             Nothing -> dfsImportVariables' basicLabel label' varName (Set.insert label visited) acc
+        --         ) acc' $ Map.findWithDefault [] label (graphRevertedEdges controlGraph)
+
+        initialPhis :: Phis
+        initialPhis = foldr (\(label, (_, _, missing)) acc ->
+                foldr (`addPhisForBlock` label) acc missing
+            ) Map.empty $ Map.toList variablesInBlocks
             where
-                phiStatements = map (\varName ->
+                addPhisForBlock :: VarName -> Label -> Phis -> Phis
+                addPhisForBlock varName label acc = if Map.member varName $ Map.findWithDefault Map.empty label acc then acc
+                    else foldr (\label' acc' -> case Map.lookup varName ((\(_, a, _) -> a) $ variablesInBlocks Map.! label') of
+                            Just i -> insertPhi label' i acc'
+                            Nothing -> addPhisForBlock varName label' (insertPhi label' 0 acc')
+                        ) acc $ Map.findWithDefault [] label (graphRevertedEdges controlGraph)
+                    where
+                        insertPhi :: Label -> Int -> Phis -> Phis
+                        insertPhi label' version = Map.insertWith (Map.unionWith Map.union) label (Map.singleton varName (Map.singleton label' (label', version)))
+
+
+        -- type Phis = Map.Map Label (Map.Map VarName (Map.Map Label (Label, Int)))
+
+        removePhi :: VarName -> Label -> (Label, Int) -> (Phis, Map.Map Label Block) -> (Phis, Map.Map Label Block)
+        removePhi varName label (newLabel, newVersion) (phis, blocks') =
+            (Map.map (Map.adjust (Map.map (\(l, i) -> if l == label && i == 0 then (newLabel, newVersion) else (l, i))) varName) $
+             Map.adjust (Map.delete varName) label phis,
+             Map.map (map (mapNames (\v ->
+                    if v == oldVarName then variableVersionName newLabel varName newVersion else v
+                ))) blocks')
+            where
+                oldVarName = variableVersionName label varName 0
+
+        phisToRemove :: Phis -> [(VarName, Label, (Label, Int))]
+        phisToRemove phis = concatMap (\(label, vars) ->
+                map (\(varName, labels) -> (varName, label, head $ Map.elems labels)) $
+                filter (\(_, labels) -> Set.size (Set.fromList $ Map.elems labels) == 1) $
+                Map.toList vars
+            ) $ Map.toList phis
+
+        removePhisUntilFixedPoint :: Phis -> Map.Map Label Block -> (Phis, Map.Map Label Block)
+        removePhisUntilFixedPoint phis oldBlocks = if null phisToRemove' then (phis, oldBlocks) else removePhisUntilFixedPoint newPhis newBlocks
+            where
+                phisToRemove' = phisToRemove phis
+                (newPhis, newBlocks) = foldr (\(varName, label, (newLabel, newVersion)) ->
+                        removePhi varName label (newLabel, newVersion)
+                    ) (phis, oldBlocks) [head phisToRemove']
+
+        finalPhis :: Phis
+        finalBlocks :: Map.Map Label Block
+        -- (finalPhis, finalBlocks) = removePhisUntilFixedPoint initialPhis (Map.map (\(b, _, _) -> b) variablesInBlocks)
+        (finalPhis, finalBlocks) = (initialPhis, (Map.map (\(b, _, _) -> b) variablesInBlocks))
+
+        replaceVariable :: Label -> Block
+        replaceVariable label = phiStatements ++ finalBlocks Map.! label
+            where
+                phiStatements = map (\(varName, varPhis) ->
                         Phi (variableVersionName label varName 0) $
-                            map (\(labelFrom, (label', version)) -> (Variable $ variableVersionName label' varName version, labelFrom))
-                                $ Map.toList $ Map.findWithDefault Map.empty varName $ importedVariables Map.! label
-                    ) $ (\(_, _, a) -> a) $ variablesInBlocks Map.! label
-                block' = map (\stmt -> foldr (\varName stmt' -> let newName = variableVersionName label varName 0 in
-                            if elem varName $ (\(_, _, a) -> a) $ variablesInBlocks Map.! label
-                            then mapNames (\name -> if name == varName then newName else name) stmt'
-                            else stmt'
-                        ) stmt $ snd $ varNames stmt
-                    ) block
-                singletonPhis = filter (\case
-                        Phi _ [(_, _)] -> True
-                        _ -> False
-                    ) phiStatements
-                singletonPhisValues = map (\case
-                        Phi new [(previous, _)] -> (new, previous)
-                        _ -> error "This should not happen"
-                    ) singletonPhis
-                nonSingletonPhis = filter (\case
-                        Phi _ [_, _] -> True
-                        _ -> False
-                    ) phiStatements
-                block'' = map (\stmt -> foldr (\(new, previous) stmt' -> let oldName = fromJust $ varNameFromValue previous in
-                        mapNames (\name -> if name == new then oldName else name) stmt') stmt singletonPhisValues) block'
+                            map (\(labelFrom, (label', version)) -> (Variable $ variableVersionName label' varName version, labelFrom)) $ Map.toList varPhis
+                    ) $ Map.toList $ Map.findWithDefault Map.empty label finalPhis
+                -- block' = map (\stmt -> foldr (\varName stmt' -> let newName = variableVersionName label varName 0 in
+                --             if elem varName $ (\(_, _, a) -> a) $ variablesInBlocks Map.! label
+                --             then mapNames (\name -> if name == varName then newName else name) stmt'
+                --             else stmt'
+                --         ) stmt $ snd $ varNames stmt
+                --     ) $ finalBlocks Map.! label

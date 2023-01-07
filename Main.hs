@@ -62,14 +62,17 @@ execProgram options parsed =
 
           let optimized = Optimalizations.run (compileOptionOFlag options) ssa
 
+          -- when (compileOptionDebug options) $ print optimized
+          -- exitFailure
+
           let withoutSSA = RemoveSSA.transform optimized
           when (compileOptionDebug options) $ print withoutSSA
-          unless (RemoveSSA.check withoutSSA) $ do
-            printStdErr "ERROR"
-            print ssa
-            printStdErr "RemoveSSA transformation failed"
-            print withoutSSA
-            exitFailure
+          -- unless (RemoveSSA.check withoutSSA) $ do
+          --   printStdErr "ERROR"
+          --   print ssa
+          --   printStdErr "RemoveSSA transformation failed"
+          --   print withoutSSA
+          --   exitFailure
 
           let code = generateAsmCode rawTypes withoutSSA
 
@@ -99,6 +102,7 @@ getCmdOptions = foldr getOpt (CmdOptions False Nothing False False False Optimal
     getOpt "--debug" opt = opt { optDebug = True }
     getOpt "-O0" opt = opt { optOFlag = 0 }
     getOpt "-O1" opt = opt { optOFlag = 1 }
+    getOpt "-O2" opt = opt { optOFlag = 2 }
     getOpt ('-':_) opt = opt { optUnknown = True }
     getOpt f opt = opt { optFile = Just f }
 

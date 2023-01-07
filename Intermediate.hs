@@ -310,14 +310,18 @@ transpileStmt' (Abs.Incr _ (Abs.LValue _ expr)) = do
         value@(Variable varName) -> (varName, value)
         _ -> error "Incr: not a variable"
 
-    emit $ BinaryOp Add varName value (Constant 1)
+    tmpName <- getNewVariable TInt
+    emit $ BinaryOp Add tmpName value (Constant 1)
+    emit $ Assign varName (Variable tmpName)
     return id
 transpileStmt' (Abs.Decr _ (Abs.LValue _ expr)) = do
     (varName, value) <- transpileExpr expr <&> \case
         value@(Variable varName) -> (varName, value)
         _ -> error "Decr: not a variable"
 
-    emit $ BinaryOp Sub varName value (Constant 1)
+    tmpName <- getNewVariable TInt
+    emit $ BinaryOp Sub tmpName value (Constant 1)
+    emit $ Assign varName (Variable tmpName)
     return id
 transpileStmt' (Abs.Ass _ lvalue expr2) = do
     value <- transpileExpr expr2

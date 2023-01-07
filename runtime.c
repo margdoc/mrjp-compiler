@@ -23,7 +23,7 @@ void printString(char* s) {
     printf("%s\n", s);
 }
 
-typedef long counterType;
+typedef int64_t counterType;
 
 char* __copyString(char*);
 
@@ -82,14 +82,14 @@ char* __copyString(char* s) {
     return t;
 }
 
-void* __allocArray(long length) {
+void* __allocArray(int64_t length) {
     void *p = __alloc(8 * length + sizeof(counterType));
     memset(p + sizeof(counterType), 0, 8 * length);
     *(counterType*)p = length;
     return p ;
 }
 
-long __loadArray(void* p, long index) {
+int64_t __loadArray(void* p, int64_t index) {
     if (p == NULL) {
         puts("null pointer");
         exit(1);
@@ -101,10 +101,10 @@ long __loadArray(void* p, long index) {
         exit(1);
     }
 
-    return *((long*)(p + 8 + 8 * index));
+    return *((int64_t*)(p + 8 + 8 * index));
 }
 
-void __storeArray(void* p, long index, long value) {
+void __storeArray(void* p, int64_t index, int64_t value) {
     if (p == NULL) {
         puts("null pointer");
         exit(1);
@@ -116,12 +116,12 @@ void __storeArray(void* p, long index, long value) {
         exit(1);
     }
 
-    *((long*)(p + 8 + 8 * index)) = value;
+    *((int64_t*)(p + 8 + 8 * index)) = value;
 }
 
-void* __allocObject(int size, long* vtable) {
+void* __allocObject(int size, int64_t* vtable) {
     void *p = __alloc(size + 8);
-    memset(p + sizeof(long), 0, size);
-    *(long**)p = vtable;
+    memset(p + sizeof(int64_t), 0, size);
+    *(int64_t**)p = vtable;
     return p;
 }
