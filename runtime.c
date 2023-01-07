@@ -9,6 +9,11 @@ void error () {
     exit(1);
 }
 
+void __dividing_by_zero () {
+    puts("runtime error: dividing by zero");
+    exit(1);
+}
+
 void printInt(int i) {
     printf("%d\n", i);
 }
