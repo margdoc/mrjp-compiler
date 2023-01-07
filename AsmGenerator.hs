@@ -2,14 +2,13 @@
 module AsmGenerator (generateAsmCode) where
 
 import Control.Monad (when)
-import Control.Monad.Identity (Identity (runIdentity))
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Reader (ReaderT (runReaderT))
 import Control.Monad.State (StateT (runStateT), modify, gets)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
-import IntermediateTypes (Program, ControlGraph (..), Label, Statement (..), Block, Value (..), BinaryOpType (..), UnaryOpType (..), VarName, methodLabel, FunctionLabel (..), varNames)
+import IntermediateTypes (Program, ControlGraph (..), Label, Statement (..), Block, Value (..), BinaryOpType (..), UnaryOpType (..), VarName, methodLabel, FunctionLabel (..), varNames, userFuncName)
 import TypeCheckerTypes (GlobalTypes (..), ClassDef (..))
 import TypeChecker (selfKeyword)
 
@@ -56,14 +55,15 @@ initialState = State
     , usedBlocks = Set.empty
     }
 
-type FunctionBodyGenerator = ExceptT String (ReaderT Env (StateT State Identity))
+type FunctionBodyGenerator = ExceptT String (ReaderT Env (StateT State IO))
 
-runFunctionBodyGenerator :: FunctionBodyGenerator a -> String
-runFunctionBodyGenerator generator = case fst output of
-        Left err -> error err
-        Right _ -> generateAsmLines $ reverse $ asmLines $ snd output
+runFunctionBodyGenerator :: FunctionBodyGenerator a -> IO String
+runFunctionBodyGenerator generator = do
+    output >>= \case
+        (Left err, _) -> error err
+        (Right _, state) -> return $ generateAsmLines $ reverse $ asmLines state
     where
-        output = runIdentity $ runStateT (runReaderT (runExceptT generator) initialEnv) initialState
+        output = runStateT (runReaderT (runExceptT generator) initialEnv) initialState
 
 emitAsmLine :: AsmLine -> FunctionBodyGenerator ()
 emitAsmLine asmLine = modify $ \s -> s { asmLines = asmLine : asmLines s }
@@ -97,7 +97,7 @@ data ClassData = ClassData
 classDataFromRaw :: RawClassData -> ClassData
 classDataFromRaw rawClassData = ClassData
     { offsets = Map.fromList $ zip (rawOffsets rawClassData) [0..]
-    , vtable = Map.fromList $ zip (map fst $ rawVtable rawClassData) $ zip (map snd $ rawVtable rawClassData) [0..]
+    , vtable = Map.fromList $ zip (map (userFuncName . fst) $ rawVtable rawClassData) $ zip (map snd $ rawVtable rawClassData) [0..]
     }
 
 generateClassData :: Map.Map VarName ClassDef -> VarName -> ClassDef -> Map.Map VarName RawClassData -> Map.Map VarName RawClassData
@@ -118,11 +118,14 @@ generateClassData classes className classDef acc = if Map.member className acc t
 vtableLabel :: VarName -> String
 vtableLabel className = className ++ "$vtable"
 
-generateAsmCode :: GlobalTypes -> Program -> String
+generateAsmCode :: GlobalTypes -> Program -> IO String
 generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
     emitCmd ".intel_syntax noprefix"
     emitLabel ".LC0"
     emitCmd ".globl main"
+    emitEmptyLine
+    emitLabel "main"
+    emitCmd $ "jmp " ++ userFuncName "main"
     emitEmptyLine
     mapM_ (uncurry generateFunction) $ Map.toAscList program
     emitEmptyLine
@@ -157,7 +160,7 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
 
             generateVTableEntry :: (Label, VarName) -> FunctionBodyGenerator ()
             generateVTableEntry (label, className) = do
-                emitCmd $ ".quad " ++ methodLabel className label
+                emitCmd $ ".quad " ++ userFuncName (methodLabel className label)
 
             generateVTable :: VarName -> RawClassData -> FunctionBodyGenerator ()
             generateVTable className classData = do
@@ -187,9 +190,10 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
             generateFuncBody :: Label -> ControlGraph -> FunctionBodyGenerator ()
             generateFuncBody funcName controlGraph = do
                 modify $ \s -> s { usedBlocks = Set.empty }
-                emitCmd "push rbp"
-                emitCmd "mov rbp, rsp"
-                emitCmd $ "sub rsp, " ++ show (8 * allVariablesLength)
+                when (allVariablesLength > 0) $ do
+                    emitCmd "push rbp"
+                    emitCmd "mov rbp, rsp"
+                    emitCmd $ "sub rsp, " ++ show (8 * allVariablesLength)
                 generateArgs $ graphArgs controlGraph
                 mapM_ (uncurry generateBlock) $ Map.toAscList blocks
                     where
@@ -347,10 +351,10 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (Return value) = do
                             emitCmd $ "mov rax, " ++ generateValue value
-                            emitCmd "leave"
+                            when (allVariablesLength > 0) $ emitCmd "leave"
                             emitCmd "ret"
                         generateStatement VReturn = do
-                            emitCmd "leave"
+                            when (allVariablesLength > 0) $ emitCmd "leave"
                             emitCmd "ret"
                         generateStatement (BinaryOp Concat varName value1 value2) = do
                             emitCmd $ "mov rdi, " ++ generateValue value1
@@ -455,7 +459,7 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (CallMethod varName self className label values) =
                             generateFunctionCall varName (MethodLabel className label) (self : values)
-                        generateStatement _ = error "Unsupported statement"
+                        generateStatement stmt = error $ "Unsupported statement " ++ show stmt
 
 
                         emitFunctionCall :: String -> Int -> FunctionBodyGenerator ()
@@ -484,7 +488,3 @@ gatherAllVariables graph = Set.toList $ foldr (flip $ foldr gatherVariables) (Se
     where
         gatherVariables :: Statement -> Set.Set String -> Set.Set String
         gatherVariables stmt = maybe id Set.insert (fst $ varNames stmt)
-
-isValue :: VarName -> Value -> Bool
-isValue varName (Variable varName') = varName == varName'
-isValue _ _ = False

@@ -74,7 +74,7 @@ execProgram options parsed =
           --   print withoutSSA
           --   exitFailure
 
-          let code = generateAsmCode rawTypes withoutSSA
+          code <- generateAsmCode rawTypes withoutSSA
 
           let fileNameWithoutExt = reverse . drop 4 . reverse $ compileOptionFileName options
           let asmFile = fileNameWithoutExt ++ ".s"

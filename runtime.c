@@ -4,48 +4,51 @@
 #include <string.h>
 
 
-void error () {
+#define BULTIN_PREFIX(x) __ ## x
+#define USER_DEF_PREFIX(x) ___ ## x
+
+void USER_DEF_PREFIX(error) () {
     puts("runtime error");
     exit(1);
 }
 
-void __dividing_by_zero () {
+void BULTIN_PREFIX(dividing_by_zero) () {
     puts("runtime error: dividing by zero");
     exit(1);
 }
 
-void printInt(int i) {
+void USER_DEF_PREFIX(printInt)(int i) {
     printf("%d\n", i);
 }
 
-int readInt() {
+int USER_DEF_PREFIX(readInt)() {
     int i;
     scanf("%d", &i);
     return i;
 }
 
-void printString(char* s) {
+void USER_DEF_PREFIX(printString)(char* s) {
     printf("%s\n", s);
 }
 
 typedef int64_t counterType;
 
-char* __copyString(char*);
+char* BULTIN_PREFIX(copyString)(char*);
 
-void* readString() {
+void* USER_DEF_PREFIX(readString)() {
     char* s = NULL;
     size_t len = 0;
     ssize_t read = getline(&s, &len, stdin);
     if (read == -1) {
-        error();
+        USER_DEF_PREFIX(error)();
     }
     s[read - 1] = '\0';
-    void* string = __copyString(s);
+    void* string = BULTIN_PREFIX(copyString)(s);
     free(s);
     return string;
 }
 
-void* __alloc(int size) {
+void* BULTIN_PREFIX(alloc)(int size) {
     void *p = malloc(size + sizeof(counterType));
     if (p == NULL) {
         puts("out of memory");
@@ -56,14 +59,14 @@ void* __alloc(int size) {
     return p + sizeof(counterType);
 }
 
-void __addRef(void* p) {
+void BULTIN_PREFIX(addRef)(void* p) {
     if (p != NULL) {
         counterType *counter = p - sizeof(counterType);
         *counter += 1;
     }
 }
 
-void __removeRef(void* p) {
+void BULTIN_PREFIX(removeRef)(void* p) {
     if (p != NULL) {
         counterType *counter = p - sizeof(counterType);
         *counter -= 1;
@@ -74,27 +77,27 @@ void __removeRef(void* p) {
     }
 }
 
-char* __concat(char* a, char* b) {
-    char *s = __alloc(strlen(a) + strlen(b) + 1);
+char* BULTIN_PREFIX(concat)(char* a, char* b) {
+    char *s = BULTIN_PREFIX(alloc)(strlen(a) + strlen(b) + 1);
     strcpy(s, a);
     strcat(s, b);
     return s;
 }
 
-char* __copyString(char* s) {
-    char *t = __alloc(strlen(s) + 1);
+char* BULTIN_PREFIX(copyString)(char* s) {
+    char *t = BULTIN_PREFIX(alloc)(strlen(s) + 1);
     strcpy(t, s);
     return t;
 }
 
-void* __allocArray(int64_t length) {
-    void *p = __alloc(8 * length + sizeof(counterType));
+void* BULTIN_PREFIX(allocArray)(int64_t length) {
+    void *p = BULTIN_PREFIX(alloc)(8 * length + sizeof(counterType));
     memset(p + sizeof(counterType), 0, 8 * length);
     *(counterType*)p = length;
     return p ;
 }
 
-int64_t __loadArray(void* p, int64_t index) {
+int64_t BULTIN_PREFIX(loadArray)(void* p, int64_t index) {
     if (p == NULL) {
         puts("null pointer");
         exit(1);
@@ -109,7 +112,7 @@ int64_t __loadArray(void* p, int64_t index) {
     return *((int64_t*)(p + 8 + 8 * index));
 }
 
-void __storeArray(void* p, int64_t index, int64_t value) {
+void BULTIN_PREFIX(storeArray)(void* p, int64_t index, int64_t value) {
     if (p == NULL) {
         puts("null pointer");
         exit(1);
@@ -124,8 +127,8 @@ void __storeArray(void* p, int64_t index, int64_t value) {
     *((int64_t*)(p + 8 + 8 * index)) = value;
 }
 
-void* __allocObject(int size, int64_t* vtable) {
-    void *p = __alloc(size + 8);
+void* BULTIN_PREFIX(allocObject)(int size, int64_t* vtable) {
+    void *p = BULTIN_PREFIX(alloc)(size + 8);
     memset(p + sizeof(int64_t), 0, size);
     *(int64_t**)p = vtable;
     return p;

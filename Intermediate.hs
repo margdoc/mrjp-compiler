@@ -11,7 +11,7 @@ import qualified Data.Map as Map
 import qualified Grammar.Abs as Abs
 
 import TypeCheckerTypes ( Type (..), GlobalTypes (..), FuncDef (..), ClassDef (..) )
-import IntermediateTypes ( Program, Label, ControlGraph (..), VarName, Block, Statement (..), Value (..), BinaryOpType (..), UnaryOpType (..), methodLabel, buildEdges )
+import IntermediateTypes ( Program, Label, ControlGraph (..), VarName, Block, Statement (..), Value (..), BinaryOpType (..), UnaryOpType (..), methodLabel, buildEdges, userFuncName )
 import TypeChecker (selfKeyword)
 
 type IntermediateMonad = ExceptT String (ReaderT IEnv IO)
@@ -43,13 +43,13 @@ transpileMethodDef :: VarName -> Abs.FnDef -> IntermediateMonad (Label, ControlG
 transpileMethodDef className (Abs.FnDef _ _ (Abs.Ident label) args body) = do
     let argTypes = map (\(Abs.Arg _ t (Abs.Ident argName)) -> (argName, evalType t)) args
     controlGraph <- transpileFuncBody body ((selfKeyword, TClass className) : argTypes)
-    return (methodLabel className label, controlGraph)
+    return (userFuncName $ methodLabel className label, controlGraph)
 
 transpileDef :: Abs.TopDef -> IntermediateMonad [(Label, ControlGraph)]
 transpileDef (Abs.TopFnDef _ (Abs.FnDef _ _ (Abs.Ident label) args body)) = do
     let argTypes = map (\(Abs.Arg _ t (Abs.Ident argName)) -> (argName, evalType t)) args
     controlGraph <- transpileFuncBody body argTypes
-    return $ return (label, buildEdges controlGraph)
+    return $ return (userFuncName label, buildEdges controlGraph)
 transpileDef (Abs.TopClassDef _ classTopDef) = do
     classDef <- asks (Map.lookup className . globalClasses . iEnvTypes) <&> \case
         Just classDef -> classDef
@@ -524,12 +524,12 @@ transpileFuncApp funcCtor t funcName args = do
         _ -> getNewVariable t <&> Just
 
     mapM_ (\case
-        Object varName -> do
+        Object varName@('$':_) -> do -- only for temporary variables
             emit $ AddRef varName
             addToDestruct varName
         _ -> return ()) args
 
-    emit $ funcCtor tmp funcName args
+    emit $ funcCtor tmp (userFuncName funcName) args
 
     case tmp of
         Nothing -> return $ Constant 0

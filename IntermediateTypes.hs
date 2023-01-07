@@ -265,3 +265,7 @@ buildEdges graph = graph
             edges, revertedEdges :: Map.Map Label [Label]
             edges = Map.map edgesFromBlock $ graphData graph
             revertedEdges = Map.fromListWith (++) $ concatMap (\(label, labels) -> map (\label' -> (label', [label])) labels) $ Map.toList edges
+
+
+userFuncName :: Label -> Label
+userFuncName label = "___" ++ label
