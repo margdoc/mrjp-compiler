@@ -21,9 +21,10 @@ void USER_DEF_PREFIX(printInt)(int i) {
     printf("%d\n", i);
 }
 
-int USER_DEF_PREFIX(readInt)() {
-    int i;
-    scanf("%d", &i);
+int64_t USER_DEF_PREFIX(readInt)() {
+    int64_t i;
+    scanf("%ld", &i);
+    while(getchar() != '\n');
     return i;
 }
 
@@ -82,14 +83,6 @@ char* BULTIN_PREFIX(concat)(char* a, char* b) {
     strcpy(s, a);
     strcat(s, b);
     return s;
-}
-
-long BULTIN_PREFIX(strEqual)(char* a, char* b) {
-    return strcmp(a, b) == 0;
-}
-
-long BULTIN_PREFIX(strNotEqual)(char* a, char* b) {
-    return strcmp(a, b) != 0;
 }
 
 char* BULTIN_PREFIX(copyString)(char* s) {

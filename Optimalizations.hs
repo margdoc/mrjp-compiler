@@ -12,18 +12,18 @@ import qualified DeadCode
 type OptimalizationLevel = Int
 
 defaultLevel :: OptimalizationLevel
-defaultLevel = 2
+defaultLevel = 1
 
 data Optimalization = UnusedCode
                     | ConstantPropagation
                     | LCSE_GCSE
-                    | DeadCode
+                    | DeadCode -- not working
 
 optimalizationLevels :: Map.Map OptimalizationLevel [Optimalization]
 optimalizationLevels = Map.fromList
-    [ (0, [UnusedCode])
-    , (1, [UnusedCode, ConstantPropagation])
-    , (2, [UnusedCode, ConstantPropagation, LCSE_GCSE, DeadCode])
+    [ (0, [])
+    , (1, [UnusedCode, LCSE_GCSE])
+    , (2, [UnusedCode, ConstantPropagation, LCSE_GCSE])
     ]
 
 runOptimalization :: Optimalization -> Program -> Program

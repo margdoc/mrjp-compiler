@@ -42,12 +42,19 @@ run = Map.map removeDeadCodeFromGraph
                         x' = f x
 
                 calcInOutStep :: ControlGraph -> Map.Map Label (Set.Set VarName, Set.Set VarName) -> Map.Map Label (Set.Set VarName, Set.Set VarName)
-                calcInOutStep g previous = Map.mapWithKey calcForBlock $ graphData g
+                calcInOutStep g = postorder (graphEntry g) Set.empty calcForBlockStep
                     where
-                        calcForBlock :: Label -> Block -> (Set.Set VarName, Set.Set VarName)
-                        calcForBlock label block = (inSs, outSs)
+                        postorder :: Label -> Set.Set Label -> (Label -> Block -> Map.Map Label (Set.Set VarName, Set.Set VarName) -> Map.Map Label (Set.Set VarName, Set.Set VarName)) -> Map.Map Label (Set.Set VarName, Set.Set VarName) -> Map.Map Label (Set.Set VarName, Set.Set VarName)
+                        postorder label visited f acc = if Set.member label visited then acc else
+                            f label (graphData g Map.! label) $ foldr (\l -> postorder l (Set.insert label visited) f) acc $ Map.findWithDefault [] label $ graphEdges g
+
+                        calcForBlockStep :: Label -> Block -> Map.Map Label (Set.Set VarName, Set.Set VarName) -> Map.Map Label (Set.Set VarName, Set.Set VarName)
+                        calcForBlockStep label block acc = Map.insert label (calcForBlock label block acc) acc
+
+                        calcForBlock :: Label -> Block -> Map.Map Label (Set.Set VarName, Set.Set VarName) -> (Set.Set VarName, Set.Set VarName)
+                        calcForBlock label block acc = (inSs, outSs)
                             where
-                                (_, prevOut) = previous Map.! label
+                                (_, prevOut) = acc Map.! label
                                 (useB, killB) = usesKills block
                                 inSs = Set.union useB (Set.difference prevOut killB)
-                                outSs = Set.unions $ map (\l -> fst $ previous Map.! l) $ Map.findWithDefault [] label $ graphEdges graph
+                                outSs = Set.unions $ map (\l -> fst $ acc Map.! l) $ Map.findWithDefault [] label $ graphEdges graph

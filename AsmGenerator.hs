@@ -88,11 +88,13 @@ data RawClassData = RawClassData
     { rawOffsets :: [VarName]
     , rawVtable :: [(Label, VarName)]
     }
+    deriving (Show)
 
 data ClassData = ClassData
     { offsets :: Map.Map VarName Int
     , vtable :: Map.Map Label (VarName, Int)
     }
+    deriving (Show)
 
 classDataFromRaw :: RawClassData -> ClassData
 classDataFromRaw rawClassData = ClassData
@@ -104,8 +106,17 @@ generateClassData :: Map.Map VarName ClassDef -> VarName -> ClassDef -> Map.Map 
 generateClassData classes className classDef acc = if Map.member className acc then acc else
         Map.insert className (RawClassData attrs methods) parentAcc
     where
+        removeDuplicates :: Eq a => [(a, b)] -> [(a, b)]
+        removeDuplicates [] = []
+        removeDuplicates ((k, v) : xs) = (k, v) : removeDuplicates (filter ((/= k) . fst) xs)
         attrs = parentAttrs ++ Map.keys (classAttributes classDef)
-        methods = Map.toList $ Map.union (Map.fromList $ zip (Map.keys (classMethods classDef)) (repeat className)) parentMethods
+        methods = removeDuplicates $ renamedParentMethods ++ newMethods
+        renamedParentMethods = map (\(l, n) -> case Map.lookup l newMethodsMap of
+                Nothing -> (l, n)
+                Just n' -> (l, n')
+            ) parentMethods
+        newMethods = zip (Map.keys (classMethods classDef)) (repeat className)
+        newMethodsMap = Map.fromList newMethods
         (parentAcc, maybeParentData) = case parentClass classDef of
             Nothing -> (acc, Nothing)
             Just parentName -> (parentAcc', Just parentData)
@@ -113,7 +124,7 @@ generateClassData classes className classDef acc = if Map.member className acc t
                         parentAcc' = generateClassData classes parentName (classes Map.! parentName) acc
                         parentData = parentAcc' Map.! parentName
         parentAttrs = maybe [] rawOffsets maybeParentData
-        parentMethods = Map.fromList $ maybe [] rawVtable maybeParentData
+        parentMethods = maybe [] rawVtable maybeParentData
 
 vtableLabel :: VarName -> String
 vtableLabel className = className ++ "$vtable"
@@ -359,12 +370,18 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                         generateStatement (BinaryOp StringEqual varName value1 value2) = do
                             emitCmd $ "mov rdi, " ++ generateValue value1
                             emitCmd $ "mov rsi, " ++ generateValue value2
-                            emitFunctionCall "__strEqual" 2
+                            emitFunctionCall "strcmp" 2
+                            emitCmd "test rax, rax"
+                            emitCmd "sete al"
+                            emitCmd "movzx rax, al"
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (BinaryOp StringNotEqual varName value1 value2) = do
                             emitCmd $ "mov rdi, " ++ generateValue value1
                             emitCmd $ "mov rsi, " ++ generateValue value2
-                            emitFunctionCall "__strNotEqual" 2
+                            emitFunctionCall "strcmp" 2
+                            emitCmd "test rax, rax"
+                            emitCmd "setne al"
+                            emitCmd "movzx rax, al"
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (BinaryOp Concat varName value1 value2) = do
                             emitCmd $ "mov rdi, " ++ generateValue value1
@@ -416,9 +433,7 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (UnaryOp Not varName value) = do
                             emitCmd $ "mov rax, " ++ generateValue value
-                            emitCmd "cmp rax, 0"
-                            emitCmd "xor rax, rax"
-                            emitCmd "sete al"
+                            emitCmd "xor rax, 1"
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (Goto label) =
                             emitCmd $ "jmp " ++ generateJmpLabel label

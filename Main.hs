@@ -53,15 +53,16 @@ execProgram options parsed =
         Left err -> do
           error err
         Right intermediate -> do
+          optimizedCode <- if compileOptionOFlag options > 0
+            then do
+              let ssa = SSA.transform intermediate
+              let optimized = Optimalizations.run (compileOptionOFlag options) ssa
+              return $ RemoveSSA.transform optimized
+            else return intermediate
 
-          let ssa = SSA.transform intermediate
+          when (compileOptionDebug options) $ print optimizedCode
 
-          let optimized = Optimalizations.run (compileOptionOFlag options) ssa
-
-          let withoutSSA = RemoveSSA.transform optimized
-          when (compileOptionDebug options) $ print withoutSSA
-
-          code <- generateAsmCode rawTypes withoutSSA
+          code <- generateAsmCode rawTypes optimizedCode
 
           let fileNameWithoutExt = reverse . drop 4 . reverse $ compileOptionFileName options
           let asmFile = fileNameWithoutExt ++ ".s"

@@ -45,14 +45,13 @@ transformBlocks controlGraph' blocks = Map.mapWithKey (\label _ -> replaceVariab
                                 ) missing' $ snd varNames'
                         (newStmt, newDefined) = case fst varNames' of
                             Just varName -> case Map.lookup varName defined' of
-                                Just version -> (replaceVariableInStatement varName (version+1) stmt, Map.insert varName (version+1) defined')
-                                Nothing -> (replaceVariableInStatement varName 1 stmt, Map.insert varName 1 defined')
+                                Just version -> (renameOutput varName (variableVersionName label varName (version+1)) stmt, Map.insert varName (version+1) defined')
+                                Nothing -> (renameOutput varName (variableVersionName label varName 1) stmt, Map.insert varName 1 defined')
                             Nothing -> (stmt, defined')
 
                         replaceVariableInStatement :: VarName -> Int -> Statement -> Statement
-                        replaceVariableInStatement varName version stmt' =
-                            renameOutput varName newName $
-                            mapNames (\name -> if name == varName then newName else name) stmt'
+                        replaceVariableInStatement varName version =
+                            mapNames (\name -> if name == varName then newName else name)
                             where
                                 newName = variableVersionName label varName version
 

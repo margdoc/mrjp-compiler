@@ -292,23 +292,41 @@ transpileStmt' (Abs.CondElse _ expr stmt1 stmt2) = do
 transpileStmt' (Abs.While _ expr stmt) = do
     emitWhileLoop (transpileCondition expr) (void $ transpileStmt stmt)
     return id
-transpileStmt' (Abs.Incr _ (Abs.LValue _ expr)) = do
-    (varName, value) <- transpileExpr expr <&> \case
-        value@(Variable varName) -> (varName, value)
-        _ -> error "Incr: not a variable"
+transpileStmt' (Abs.Incr _ lvalue) = do
+    transpiledLValue <- transpileLValue lvalue
 
-    tmpName <- getNewVariable TInt
-    emit $ BinaryOp Add tmpName value (Constant 1)
-    emit $ Assign varName (Variable tmpName)
+    case transpiledLValue of
+        LValue varName -> do
+            emit $ BinaryOp Add varName (Variable varName) (Constant 1)
+        LValueArrayElem value1 value2 -> do
+            tmpName <- getNewVariable TInt
+            emit $ Load tmpName value1 value2
+            emit $ BinaryOp Add tmpName (Variable tmpName) (Constant 1)
+            emit $ Store value1 value2 (Variable tmpName)
+        LValueAttr value1 attrName -> do
+            tmpName <- getNewVariable TInt
+            className <- getClassName value1
+            emit $ Get tmpName value1 className attrName
+            emit $ BinaryOp Add tmpName (Variable tmpName) (Constant 1)
+            emit $ Set value1 className attrName (Variable tmpName)
     return id
-transpileStmt' (Abs.Decr _ (Abs.LValue _ expr)) = do
-    (varName, value) <- transpileExpr expr <&> \case
-        value@(Variable varName) -> (varName, value)
-        _ -> error "Decr: not a variable"
+transpileStmt' (Abs.Decr _ lvalue) = do
+    transpiledLValue <- transpileLValue lvalue
 
-    tmpName <- getNewVariable TInt
-    emit $ BinaryOp Sub tmpName value (Constant 1)
-    emit $ Assign varName (Variable tmpName)
+    case transpiledLValue of
+        LValue varName -> do
+            emit $ BinaryOp Sub varName (Variable varName) (Constant 1)
+        LValueArrayElem value1 value2 -> do
+            tmpName <- getNewVariable TInt
+            emit $ Load tmpName value1 value2
+            emit $ BinaryOp Sub tmpName (Variable tmpName) (Constant 1)
+            emit $ Store value1 value2 (Variable tmpName)
+        LValueAttr value1 attrName -> do
+            tmpName <- getNewVariable TInt
+            className <- getClassName value1
+            emit $ Get tmpName value1 className attrName
+            emit $ BinaryOp Sub tmpName (Variable tmpName) (Constant 1)
+            emit $ Set value1 className attrName (Variable tmpName)
     return id
 transpileStmt' (Abs.Ass _ lvalue expr2) = do
     value <- transpileExpr expr2
@@ -415,7 +433,12 @@ transpileDecl' t varName value = do
 
 transpileDecl :: Abs.Type -> Abs.Item -> ControlGraphMonad (CEnv -> CEnv)
 transpileDecl t (Abs.NoInit _ (Abs.Ident varName)) = transpileDecl' t varName (Constant 0)
-transpileDecl t (Abs.Init _ (Abs.Ident varName) expr) = transpileExpr expr >>= transpileDecl' t varName
+transpileDecl t (Abs.Init _ (Abs.Ident varName) expr) = do
+    value <- transpileExpr expr
+    case value of
+        Object v -> emit $ AddRef v
+        _ -> return ()
+    transpileDecl' t varName value
 
 
 transpileAddOp :: Abs.AddOp -> BinaryOpType
