@@ -1,17 +1,9 @@
 {-# LANGUAGE LambdaCase #-}
 module IntermediateTypes where
 
-import BasePrelude (intercalate, mapMaybe)
-import Control.Monad.RWS ( RWS )
 import qualified Data.Map as Map
-
-type Compiler a = RWS Env Output State (IO a)
-
-type Env = ()
-
-type Output = ()
-
-type State = ()
+import Data.List (intercalate)
+import Data.Maybe (mapMaybe)
 
 type VarName = String
 
@@ -269,3 +261,19 @@ buildEdges graph = graph
 
 userFuncName :: Label -> Label
 userFuncName label = "___" ++ label
+
+
+isPure :: Statement -> Bool
+isPure = \case
+    BinaryOp {} -> True
+    UnaryOp {} -> True
+    Phi _ _ -> True
+    Load {} -> True
+    ArrayLength _ _ -> True
+    AllocArray _ _ -> True
+    Get {} -> True
+    AllocObject _ _ -> True
+    Assign _ _ -> True
+    AssignString _ _ -> True
+    Self _ -> True
+    _ -> False

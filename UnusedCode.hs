@@ -2,9 +2,10 @@
 module UnusedCode where
 
 import qualified Data.Map as Map
+import qualified Data.Maybe as Maybe
 import qualified Data.Set as Set
 
-import IntermediateTypes (Program, ControlGraph (..), Block, Statement (..), buildEdges, Label)
+import IntermediateTypes (Program, ControlGraph (..), Block, Statement (..), buildEdges, VarName, varNames, Label, varNameFromValue, isPure)
 
 takeUntil :: (a -> Bool) -> [a] -> [a]
 takeUntil _ [] = []
@@ -24,18 +25,18 @@ run = Map.map removeUnusedBlocks
             VReturn -> False
             _ -> True)
 
-        removeUnreachableBlocks :: ControlGraph -> ControlGraph
-        removeUnreachableBlocks graph = graph
-            { graphData = Map.filterWithKey (\k _ -> Set.member k reachable) $ graphData graph
-            }
-            where
-                reachable :: Set.Set Label
-                reachable = reachableFrom (graphEntry graph) Set.empty
+        -- removeUnreachableBlocks :: ControlGraph -> ControlGraph
+        -- removeUnreachableBlocks graph = graph
+        --     { graphData = Map.filterWithKey (\k _ -> Set.member k reachable) $ graphData graph
+        --     }
+        --     where
+        --         reachable :: Set.Set Label
+        --         reachable = reachableFrom (graphEntry graph) Set.empty
 
-                successors :: Label -> [Label]
-                successors label = Map.findWithDefault [] label $ graphEdges graph
+        --         successors :: Label -> [Label]
+        --         successors label = Map.findWithDefault [] label $ graphEdges graph
 
-                reachableFrom :: Label -> Set.Set Label -> Set.Set Label
-                reachableFrom label visited = if Set.member label visited
-                    then visited
-                    else foldr reachableFrom (Set.insert label visited) $ successors label
+        --         reachableFrom :: Label -> Set.Set Label -> Set.Set Label
+        --         reachableFrom label visited = if Set.member label visited
+        --             then visited
+        --             else foldr reachableFrom (Set.insert label visited) $ successors label

@@ -53,26 +53,13 @@ execProgram options parsed =
         Left err -> do
           error err
         Right intermediate -> do
-          -- when (compileOptionDebug options) $ print intermediate
 
           let ssa = SSA.transform intermediate
 
-          -- when (compileOptionDebug options) $ print ssa
-          -- exitFailure
-
           let optimized = Optimalizations.run (compileOptionOFlag options) ssa
-
-          -- when (compileOptionDebug options) $ print optimized
-          -- exitFailure
 
           let withoutSSA = RemoveSSA.transform optimized
           when (compileOptionDebug options) $ print withoutSSA
-          -- unless (RemoveSSA.check withoutSSA) $ do
-          --   printStdErr "ERROR"
-          --   print ssa
-          --   printStdErr "RemoveSSA transformation failed"
-          --   print withoutSSA
-          --   exitFailure
 
           code <- generateAsmCode rawTypes withoutSSA
 

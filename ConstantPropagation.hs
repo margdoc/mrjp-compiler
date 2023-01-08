@@ -115,7 +115,7 @@ run = Map.map runForGraph
             | otherwise = (env, stmt : block)
         runForStatement' (env, block) (Assign name (Constant value)) = (Map.insert name value env, block)
         runForStatement' (env, block) stmt@(BinaryOp Concat _ _ _) = (env, stmt : block)
-        runForStatement' (env, block) stmt@(BinaryOp op name (Constant c1) (Constant 0)) | op `elem` [Div, Mod] = (env, BinaryOp op name (Constant c1) (Variable "error_var") : Call (Just "error_var") "__dividing_by_zero" [] : block)
+        runForStatement' (env, block) (BinaryOp op name (Constant c1) (Constant 0)) | op `elem` [Div, Mod] = (env, BinaryOp op name (Constant c1) (Variable "error_var") : Call (Just "error_var") "__dividing_by_zero" [] : block)
         runForStatement' (env, block) (BinaryOp op name (Constant value1) (Constant value2)) = (Map.insert name (calcBinaryOp op value1 value2) env, block)
         runForStatement' (env, block) (UnaryOp op name (Constant value)) = (Map.insert name (calcUnaryOp op value) env, block)
         runForStatement' (env, block) (If (Constant value) trueLabel falseLabel) = (env, Goto (if value == 1 then trueLabel else falseLabel) : block)
