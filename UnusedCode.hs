@@ -2,10 +2,8 @@
 module UnusedCode where
 
 import qualified Data.Map as Map
-import qualified Data.Maybe as Maybe
-import qualified Data.Set as Set
 
-import IntermediateTypes (Program, ControlGraph (..), Block, Statement (..), buildEdges, VarName, varNames, Label, varNameFromValue, isPure)
+import IntermediateTypes (Program, ControlGraph (..), Block, Statement (..), buildEdges)
 
 takeUntil :: (a -> Bool) -> [a] -> [a]
 takeUntil _ [] = []

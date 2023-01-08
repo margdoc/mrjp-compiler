@@ -84,6 +84,14 @@ char* BULTIN_PREFIX(concat)(char* a, char* b) {
     return s;
 }
 
+long BULTIN_PREFIX(strEqual)(char* a, char* b) {
+    return strcmp(a, b) == 0;
+}
+
+long BULTIN_PREFIX(strNotEqual)(char* a, char* b) {
+    return strcmp(a, b) != 0;
+}
+
 char* BULTIN_PREFIX(copyString)(char* s) {
     char *t = BULTIN_PREFIX(alloc)(strlen(s) + 1);
     strcpy(t, s);

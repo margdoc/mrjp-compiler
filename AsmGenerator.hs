@@ -356,6 +356,16 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                         generateStatement VReturn = do
                             when (allVariablesLength > 0) $ emitCmd "leave"
                             emitCmd "ret"
+                        generateStatement (BinaryOp StringEqual varName value1 value2) = do
+                            emitCmd $ "mov rdi, " ++ generateValue value1
+                            emitCmd $ "mov rsi, " ++ generateValue value2
+                            emitFunctionCall "__strEqual" 2
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (BinaryOp StringNotEqual varName value1 value2) = do
+                            emitCmd $ "mov rdi, " ++ generateValue value1
+                            emitCmd $ "mov rsi, " ++ generateValue value2
+                            emitFunctionCall "__strNotEqual" 2
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (BinaryOp Concat varName value1 value2) = do
                             emitCmd $ "mov rdi, " ++ generateValue value1
                             emitCmd $ "mov rsi, " ++ generateValue value2

@@ -590,8 +590,20 @@ transpileExpr (Abs.ERel _ expr1 op expr2) = do
     value2 <- transpileExpr expr2
 
     tmpName <- getNewVariable TBool
+    t <- getTypeFromValue value1
 
-    emit $ BinaryOp (transpileRelOp op) tmpName value1 value2
+    case (t, op) of
+        (TString, Abs.EQU _) -> emit $ BinaryOp StringEqual tmpName value1 value2
+        (TString, Abs.NE _) -> emit $ BinaryOp StringNotEqual tmpName value1 value2
+        (TClass _, Abs.EQU _) -> emit $ BinaryOp Equal tmpName value1 value2
+        (TClass _, Abs.NE _) -> emit $ BinaryOp NotEqual tmpName value1 value2
+        (TArray _, Abs.EQU _) -> emit $ BinaryOp Equal tmpName value1 value2
+        (TArray _, Abs.NE _) -> emit $ BinaryOp NotEqual tmpName value1 value2
+        (TString, _) -> error "Invalid types for relation"
+        (TClass _, _) -> error "Invalid types for relation"
+        (TArray _, _) -> error "Invalid types for relation"
+        (_, _) -> emit $ BinaryOp (transpileRelOp op) tmpName value1 value2
+
     return $ Variable tmpName
 transpileExpr (Abs.EApp _ (Abs.Ident funcName) exprs) = do
     values <- mapM transpileExpr exprs

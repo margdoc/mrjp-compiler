@@ -101,6 +101,8 @@ run = Map.map runForGraph
         calcBinaryOp LessEqual = \x y -> if x <= y then 1 else 0
         calcBinaryOp Greater = \x y -> if x > y then 1 else 0
         calcBinaryOp GreaterEqual = \x y -> if x >= y then 1 else 0
+        calcBinaryOp StringEqual = error "StringEqual is not supported in constant propagation"
+        calcBinaryOp StringNotEqual = error "StringNotEqual is not supported in constant propagation"
         calcBinaryOp Concat = error "Concat is not supported in constant propagation"
 
         calcUnaryOp :: UnaryOpType -> Int -> Int
@@ -114,7 +116,7 @@ run = Map.map runForGraph
             | name == toDelete = (env, block)
             | otherwise = (env, stmt : block)
         runForStatement' (env, block) (Assign name (Constant value)) = (Map.insert name value env, block)
-        runForStatement' (env, block) stmt@(BinaryOp Concat _ _ _) = (env, stmt : block)
+        runForStatement' (env, block) stmt@(BinaryOp op _ _ _) | op `elem` [Concat, StringEqual, StringNotEqual] = (env, stmt : block)
         runForStatement' (env, block) (BinaryOp op name (Constant c1) (Constant 0)) | op `elem` [Div, Mod] = (env, BinaryOp op name (Constant c1) (Variable "error_var") : Call (Just "error_var") "__dividing_by_zero" [] : block)
         runForStatement' (env, block) (BinaryOp op name (Constant value1) (Constant value2)) = (Map.insert name (calcBinaryOp op value1 value2) env, block)
         runForStatement' (env, block) (UnaryOp op name (Constant value)) = (Map.insert name (calcUnaryOp op value) env, block)

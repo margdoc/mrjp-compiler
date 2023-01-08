@@ -31,6 +31,8 @@ data BinaryOpType = Add
                   | Greater
                   | GreaterEqual
                   | Concat
+                  | StringEqual
+                  | StringNotEqual
                   deriving (Eq, Ord)
 
 instance Show BinaryOpType where
@@ -46,6 +48,8 @@ instance Show BinaryOpType where
     show Greater = ">"
     show GreaterEqual = ">="
     show Concat = "++"
+    show StringEqual = "=="
+    show StringNotEqual = "!="
 
 data UnaryOpType = Not
                  | Neg
