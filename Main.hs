@@ -18,6 +18,7 @@ import AsmGenerator (generateAsmCode)
 import qualified Optimalizations
 import qualified SSA
 import qualified RemoveSSA
+import Control.Monad.IO.Class (liftIO)
 
 printStdErr :: String -> IO ()
 printStdErr = hPutStrLn stderr
@@ -57,6 +58,9 @@ execProgram options parsed =
             then do
               let ssa = SSA.transform intermediate
               let optimized = Optimalizations.run (compileOptionOFlag options) ssa
+
+              -- liftIO $ print optimized
+              -- exitFailure
               return $ RemoveSSA.transform optimized
             else return intermediate
 

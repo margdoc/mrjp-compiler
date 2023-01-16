@@ -1,7 +1,7 @@
 {-# LANGUAGE LambdaCase #-}
 module AsmGenerator (generateAsmCode) where
 
-import Control.Monad (when)
+import Control.Monad (when, unless)
 import Control.Monad.Except (ExceptT, runExceptT)
 import Control.Monad.Reader (ReaderT (runReaderT))
 import Control.Monad.State (StateT (runStateT), modify, gets)
@@ -201,10 +201,9 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
             generateFuncBody :: Label -> ControlGraph -> FunctionBodyGenerator ()
             generateFuncBody funcName controlGraph = do
                 modify $ \s -> s { usedBlocks = Set.empty }
-                when (allVariablesLength > 0) $ do
-                    emitCmd "push rbp"
-                    emitCmd "mov rbp, rsp"
-                    emitCmd $ "sub rsp, " ++ show (8 * allVariablesLength)
+                emitCmd "push rbp"
+                emitCmd "mov rbp, rsp"
+                when (allVariablesLength > 0) $ emitCmd $ "sub rsp, " ++ show (8 * allVariablesLength + alignStack)
                 generateArgs $ graphArgs controlGraph
                 mapM_ (uncurry generateBlock) $ Map.toAscList blocks
                     where
@@ -250,6 +249,8 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                         qwordPtr = "QWORD PTR "
                         varMemory :: String -> String
                         varMemory varName = qwordPtr ++ "[rbp-" ++ show (varIndex varName) ++ "]"
+
+                        alignStack = if even allVariablesLength then 0 else 8
 
                         generateArgs :: [VarName] -> FunctionBodyGenerator ()
                         generateArgs args = generateArgs' argsRegisters (length args - length argsRegisters + 1) args
@@ -308,7 +309,7 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                                     MethodLabel className label -> do
                                     emitCmd "mov rax, QWORD PTR [rdi]"
                                     emitCmd $ "mov rax , QWORD PTR [rax+" ++ show (getMethodOffset className label) ++ "]"
-                            emitFunctionCall (callLabel functionLabel) (max (length values - length argsRegisters) 0 + stackAligment)
+                            emitFunctionCall (callLabel functionLabel) (max (length values - length argsRegisters) 0)
                             case varName of
                                 Just var -> emitCmd $ "mov " ++ varMemory var ++ ", rax"
                                 Nothing -> return ()
@@ -317,20 +318,17 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                                     callLabel (FunctionLabel label) = label
                                     callLabel (MethodLabel _ _) = "rax"
 
-                                    alignStack :: Bool
-                                    alignStack = (allVariablesLength + length values) `mod` 2 == 1
-
-                                    stackAligment :: Int
-                                    stackAligment = if alignStack then 1 else 0
-
                                     generateFunctionArgs :: [Value] -> FunctionBodyGenerator ()
-                                    generateFunctionArgs = generateFunctionArgs' argsRegisters (allVariablesLength + 1 + stackAligment)
+                                    generateFunctionArgs = generateFunctionArgs' argsRegisters (allVariablesLength + 1)
                                         where
                                             generateFunctionArgs' :: [String] -> Int -> [Value] -> FunctionBodyGenerator ()
                                             generateFunctionArgs' _ _ [] = return ()
                                             generateFunctionArgs' [] i (value:vs) = do
-                                                emitCmd ("mov rax, " ++ generateValue value)
-                                                emitCmd ("mov QWORD PTR [rbp-" ++ show (8 * i) ++ "], rax")
+                                                case value of
+                                                    Constant i' -> emitCmd $ "mov QWORD PTR [rbp-" ++ show (8 * i + alignStack) ++ "], " ++ show i'
+                                                    _ -> do
+                                                        emitCmd $ "mov rax, " ++ generateValue value
+                                                        emitCmd $ "mov QWORD PTR [rbp-" ++ show (8 * i + alignStack) ++ "], rax"
                                                 generateFunctionArgs' [] (i + 1) vs
                                             generateFunctionArgs' (reg:regs) i (value:vs) = do
                                                 emitCmd ("mov " ++ reg ++ ", " ++ generateValue value)
@@ -363,9 +361,11 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                         generateStatement (Return value) = do
                             emitCmd $ "mov rax, " ++ generateValue value
                             when (allVariablesLength > 0) $ emitCmd "leave"
+                            unless (allVariablesLength > 0) $ emitCmd "pop rbp"
                             emitCmd "ret"
                         generateStatement VReturn = do
                             when (allVariablesLength > 0) $ emitCmd "leave"
+                            unless (allVariablesLength > 0) $ emitCmd "pop rbp"
                             emitCmd "ret"
                         generateStatement (BinaryOp StringEqual varName value1 value2) = do
                             emitCmd $ "mov rdi, " ++ generateValue value1
@@ -485,7 +485,6 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                         generateStatement (CallMethod varName self className label values) =
                             generateFunctionCall varName (MethodLabel className label) (self : values)
                         generateStatement stmt = error $ "Unsupported statement " ++ show stmt
-
 
                         emitFunctionCall :: String -> Int -> FunctionBodyGenerator ()
                         emitFunctionCall label argsNumber = do
