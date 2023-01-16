@@ -22,19 +22,3 @@ run = Map.map removeUnusedBlocks
             Return{} -> False
             VReturn -> False
             _ -> True)
-
-        -- removeUnreachableBlocks :: ControlGraph -> ControlGraph
-        -- removeUnreachableBlocks graph = graph
-        --     { graphData = Map.filterWithKey (\k _ -> Set.member k reachable) $ graphData graph
-        --     }
-        --     where
-        --         reachable :: Set.Set Label
-        --         reachable = reachableFrom (graphEntry graph) Set.empty
-
-        --         successors :: Label -> [Label]
-        --         successors label = Map.findWithDefault [] label $ graphEdges graph
-
-        --         reachableFrom :: Label -> Set.Set Label -> Set.Set Label
-        --         reachableFrom label visited = if Set.member label visited
-        --             then visited
-        --             else foldr reachableFrom (Set.insert label visited) $ successors label

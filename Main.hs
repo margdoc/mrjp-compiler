@@ -95,6 +95,7 @@ getCmdOptions = foldr getOpt (CmdOptions False Nothing False False False Optimal
     getOpt "-O0" opt = opt { optOFlag = 0 }
     getOpt "-O1" opt = opt { optOFlag = 1 }
     getOpt "-O2" opt = opt { optOFlag = 2 }
+    getOpt "-O3" opt = opt { optOFlag = 3 }
     getOpt ('-':_) opt = opt { optUnknown = True }
     getOpt f opt = opt { optFile = Just f }
 

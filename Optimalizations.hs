@@ -8,22 +8,26 @@ import qualified UnusedCode
 import qualified ConstantPropagation
 import qualified LCSE_GCSE
 import qualified DeadCode
+import qualified UnusedBlocks
+
 
 type OptimalizationLevel = Int
 
 defaultLevel :: OptimalizationLevel
-defaultLevel = 1
+defaultLevel = 2
 
 data Optimalization = UnusedCode
                     | ConstantPropagation
                     | LCSE_GCSE
-                    | DeadCode -- not working
+                    | DeadCode
+                    | UnusedBlocks
 
 optimalizationLevels :: Map.Map OptimalizationLevel [Optimalization]
 optimalizationLevels = Map.fromList
     [ (0, [])
-    , (1, [UnusedCode, LCSE_GCSE])
-    , (2, [UnusedCode, ConstantPropagation, LCSE_GCSE])
+    , (1, [UnusedCode])
+    , (2, [UnusedCode, LCSE_GCSE, DeadCode])
+    , (3, [UnusedCode, LCSE_GCSE, DeadCode, ConstantPropagation, UnusedBlocks])
     ]
 
 runOptimalization :: Optimalization -> Program -> Program
@@ -31,6 +35,7 @@ runOptimalization UnusedCode program = UnusedCode.run program
 runOptimalization ConstantPropagation program = ConstantPropagation.run program
 runOptimalization LCSE_GCSE program = LCSE_GCSE.run program
 runOptimalization DeadCode program = DeadCode.run program
+runOptimalization UnusedBlocks program = UnusedBlocks.run program
 
 
 run :: OptimalizationLevel -> Program -> Program
