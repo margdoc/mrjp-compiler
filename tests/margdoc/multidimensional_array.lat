@@ -1,0 +1,21 @@
+// Author: Mikołaj Grzebieluch 417891
+
+int main() {
+    int[][] tab = new int[][10];
+
+    int i, j;
+    while (i < 10) {
+        tab[i] = new int[10];
+
+        j = 0;
+	    while (j < 10) {
+            tab[i][j] = i * 10 + j;
+            j++;
+        }
+
+        i++;
+    }
+
+    printInt(tab[9][9]);
+    return 0;
+}

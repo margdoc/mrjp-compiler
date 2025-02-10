@@ -1,0 +1,21 @@
+// Author: Mikołaj Grzebieluch 417891
+
+int f() {
+    return 1;
+}
+
+class A {
+    string f() {
+        return "blep";
+    }
+
+    void main() {
+        printString(f());
+    }
+}
+
+int main() {
+    A a = new A;
+    a.main();
+    return 0;
+}

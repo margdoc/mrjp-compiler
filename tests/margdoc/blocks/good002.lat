@@ -1,0 +1,12 @@
+// Author: Mikołaj Grzebieluch 417891
+
+void f(int x) {{
+    printInt(x);
+    int x = 2;
+    printInt(x);
+}}
+
+int main() {
+    f(42);
+    return 0;
+}

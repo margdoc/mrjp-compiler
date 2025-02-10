@@ -1,0 +1,10 @@
+// Author: Mikołaj Grzebieluch 417891
+
+int f() {
+    return 42;
+}
+
+int main() {
+    f() = 2137;
+    return 0;
+}

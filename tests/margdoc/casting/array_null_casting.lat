@@ -1,0 +1,14 @@
+// Author: Mikołaj Grzebieluch 417891
+
+int main() {
+    int[] a = new int[10];
+    a = (int[]) null;
+
+    if (a == (int[]) null) {
+        printString("a is null");
+    } else {
+        printString("a is not null");
+    }
+
+    return 0;
+}

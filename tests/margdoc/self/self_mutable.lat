@@ -1,0 +1,11 @@
+// Author: Mikołaj Grzebieluch 417891
+
+class A {
+    void a() {
+        self = new A;
+    }
+}
+
+int main() {
+    return 0;
+}

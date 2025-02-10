@@ -1,0 +1,6 @@
+void f() {}
+
+int main() {
+  boolean a = f() == f();
+  return 0;
+}

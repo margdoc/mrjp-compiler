@@ -1,0 +1,13 @@
+// Author: Mikołaj Grzebieluch 417891
+
+// Implicit casts are not allowed.
+// "Wprowadzenie niejawnych konwersji (rzutowań) będzie traktowane jako błąd, nie zaś ulepszenie."
+
+class A {
+
+}
+
+int main() {
+    A a = null;
+    return 0;
+}

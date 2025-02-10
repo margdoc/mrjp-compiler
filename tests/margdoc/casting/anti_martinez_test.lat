@@ -1,0 +1,11 @@
+// Author: Mikołaj Grzebieluch 417891
+
+int main() {
+    if (0) {
+        printString("kobieta jest jak trytytka że tylko w jedną stronę można");
+    } else {
+        printString("rozwiń");
+    }
+
+    return 0;
+}

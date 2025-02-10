@@ -1,0 +1,13 @@
+// Author: Mikołaj Grzebieluch 417891
+
+class A extends B {
+
+}
+
+class B extends A {
+
+}
+
+int main() {
+    return 0;
+}

@@ -1,0 +1,14 @@
+// Author: Mikołaj Grzebieluch 417891
+
+class A {
+    int a() {
+        {
+            int self = 2;
+            return self;
+        }
+    }
+}
+
+int main() {
+    return 0;
+}

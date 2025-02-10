@@ -1,0 +1,10 @@
+// Author: Mikołaj Grzebieluch 417891
+
+int main() {
+    boolean c = false;
+
+    while(c)
+        int x;
+
+    return 0;
+}

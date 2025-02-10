@@ -1,0 +1,33 @@
+// Author: Mikołaj Grzebieluch 417891
+
+class A extends B {
+
+}
+
+class B extends C {
+
+}
+
+class C extends D {
+
+}
+
+class D extends E {
+
+}
+
+class E extends F {
+
+}
+
+class F extends G {
+
+}
+
+class G extends C {
+
+}
+
+int main() {
+    return 0;
+}

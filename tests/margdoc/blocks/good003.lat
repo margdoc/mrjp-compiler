@@ -1,0 +1,13 @@
+// Author: Mikołaj Grzebieluch 417891
+
+int main() {
+    int[] a = new int[2];
+
+    for(int i : a) {{
+        printInt(i);
+        int i = 2;
+        printInt(i);
+    }}
+
+    return 0;
+}

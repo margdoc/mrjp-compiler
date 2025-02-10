@@ -1,0 +1,7 @@
+// Author: Mikołaj Grzebieluch 417891
+
+int main() {
+    int[] a = new int[10];
+    a.length = 0;
+    return 0;
+}

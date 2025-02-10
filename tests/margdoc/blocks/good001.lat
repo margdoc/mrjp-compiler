@@ -1,0 +1,10 @@
+// Author: Mikołaj Grzebieluch 417891
+
+int main() {
+    int a;
+    {
+        string a;
+
+        return 0;
+    }
+}

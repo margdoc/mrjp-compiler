@@ -1,0 +1,16 @@
+// Author: Mikołaj Grzebieluch 417891
+
+class A {
+
+}
+
+class B extends A {
+    int a;
+}
+
+int main() {
+    A[] a = new A[10];
+    B[] b = a;
+
+    return 0;
+}

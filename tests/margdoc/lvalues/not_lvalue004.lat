@@ -1,0 +1,15 @@
+// Author: Mikołaj Grzebieluch 417891
+
+class A {
+    int a;
+
+    int f() {
+        return a;
+    }
+}
+
+int main() {
+    A a = new A;
+    a.f() = 2137;
+    return 0;
+}

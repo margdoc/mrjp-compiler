@@ -1,0 +1,9 @@
+// Author: Mikołaj Grzebieluch 417891
+
+int main() {
+    if (true) {
+        return 0;
+    } else {
+        return "blep";
+    }
+}

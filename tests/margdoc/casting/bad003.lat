@@ -1,0 +1,16 @@
+// Author: Mikołaj Grzebieluch 417891
+
+class A {
+
+}
+
+class B extends A {
+
+}
+
+int main() {
+    A a = new A;
+    B b = (B)a;
+
+    return 0;
+}

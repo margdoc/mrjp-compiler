@@ -1,0 +1,12 @@
+// Author: Mikołaj Grzebieluch 417891
+
+int[] f(int[] a) {
+    return a;
+}
+
+int main() {
+    int[] a = new int[10];
+    f(a)[0] = 1;
+    printInt(a[0]);
+    return 0;
+}

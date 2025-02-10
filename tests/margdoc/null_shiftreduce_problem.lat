@@ -1,0 +1,9 @@
+// Author: Mikołaj Grzebieluch 417891
+
+int main() {
+    int a, b;
+    a = 1;
+    b = 2;
+    printInt((a) + b);
+    return 0;
+}

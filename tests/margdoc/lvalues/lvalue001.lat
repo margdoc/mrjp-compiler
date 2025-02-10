@@ -1,0 +1,17 @@
+// Author: Mikołaj Grzebieluch 417891
+
+class A {
+    int[] a;
+
+    int[] f() {
+        return a;
+    }
+}
+
+int main() {
+    A a = new A;
+    a.a = new int[10];
+    a.f()[0] = 1;
+    printInt(a.a[0]);
+    return 0;
+}

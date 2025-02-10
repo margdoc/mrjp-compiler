@@ -1,0 +1,16 @@
+// Author: Mikołaj Grzebieluch 417891
+
+class A {
+    int a;
+}
+
+class B extends A {
+    string a;
+}
+
+int main() {
+    B b = new B;
+    b.a = "blep";
+    printString(b.a);
+    return 0;
+}

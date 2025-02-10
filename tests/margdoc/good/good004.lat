@@ -1,0 +1,11 @@
+// Author: Mikołaj Grzebieluch 417891
+
+int main() {
+    int[] a = new int[100];
+
+    for(int i : a) {
+        int x;
+    }
+
+    return 0;
+}

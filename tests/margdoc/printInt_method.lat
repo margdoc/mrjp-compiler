@@ -1,0 +1,17 @@
+// Author: Mikołaj Grzebieluch 417891
+
+void f(int x) {
+    printInt(x);
+}
+
+class A {
+    void printInt(int x) {
+        f(x);
+    }
+}
+
+int main() {
+    A a = new A;
+    a.printInt(1);
+    return 0;
+}

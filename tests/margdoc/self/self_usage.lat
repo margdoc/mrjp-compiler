@@ -1,0 +1,37 @@
+// Author: Mikołaj Grzebieluch 417891
+
+void f() {
+    printString("f");
+}
+
+class A {
+    int a;
+
+    void f() {
+        printString("A.f");
+    }
+
+    void g(int a) {
+        self.a = a;
+        self.f();
+    }
+}
+
+class B {
+    void f() {
+        printString("B.f");
+    }
+
+    void g(int a) {
+        self.f();
+    }
+}
+
+int main() {
+    A a = new A;
+    B b = new B;
+    a.g(1);
+    b.g(2);
+    f();
+    return 0;
+}

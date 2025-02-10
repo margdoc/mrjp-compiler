@@ -1,0 +1,24 @@
+// Author: Mikołaj Grzebieluch 417891
+
+class A {
+    int a;
+}
+
+class B {
+    A[] as;
+}
+
+int main() {
+    B[] bs = new B[10];
+    B b = new B;
+    b.as = new A[10];
+    b.as[0] = new A;
+    b.as[0].a = 42;
+
+    bs[0] = b;
+
+    bs[0].as[0].a = 43;
+
+    printInt(bs[0].as[0].a);
+    return 0;
+}

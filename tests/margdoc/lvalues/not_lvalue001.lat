@@ -1,0 +1,6 @@
+// Author: Mikołaj Grzebieluch 417891
+
+int main() {
+    2 + 2 = 4;
+    return 0;
+}
