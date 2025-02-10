@@ -452,6 +452,10 @@ generateAsmCode globalTypes program = runFunctionBodyGenerator $ do
                             emitCmd $ "mov rdi, " ++ generateValue value
                             emitFunctionCall "__allocArray" 1
                             emitCmd $ "mov " ++ varMemory varName ++ ", rax"
+                        generateStatement (AllocArrayString varName value) = do
+                            emitCmd $ "mov rdi, " ++ generateValue value
+                            emitFunctionCall "__allocArrayString" 1
+                            emitCmd $ "mov " ++ varMemory varName ++ ", rax"
                         generateStatement (ArrayLength varName value) = do
                             emitCmd $ "mov rax, " ++ generateValue value
                             emitCmd "mov rax, QWORD PTR [rax]"

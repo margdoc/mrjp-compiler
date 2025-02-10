@@ -98,6 +98,17 @@ void* BULTIN_PREFIX(allocArray)(int64_t length) {
     return p ;
 }
 
+void* BULTIN_PREFIX(allocArrayString)(int64_t length) {
+    void *p = BULTIN_PREFIX(allocArray)(length);
+
+    char empty_string[] = "";
+    for (int i = 1; i < length + 1; ++i) {
+        ((int64_t*) p)[i] = (int64_t)BULTIN_PREFIX(copyString)(empty_string);
+        BULTIN_PREFIX(addRef)((void*)((int64_t*) p)[i]);
+    }
+    return p;
+}
+
 int64_t BULTIN_PREFIX(loadArray)(void* p, int64_t index) {
     if (p == NULL) {
         puts("null pointer");

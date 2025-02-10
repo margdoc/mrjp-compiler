@@ -18,7 +18,7 @@ import AsmGenerator (generateAsmCode)
 import qualified Optimalizations
 import qualified SSA
 import qualified RemoveSSA
-import Control.Monad.IO.Class (liftIO)
+-- import Control.Monad.IO.Class (liftIO)
 
 printStdErr :: String -> IO ()
 printStdErr = hPutStrLn stderr

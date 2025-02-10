@@ -698,9 +698,12 @@ transpileExpr (Abs.Not _ expr) = do
     return $ Variable tmpName
 transpileExpr (Abs.EAlloc _ t expr) = do
     value <- transpileExpr expr
-    tmpName <- getNewVariable $ TArray $ evalType t
+    let elemType = evalType t
+    tmpName <- getNewVariable $ TArray elemType
 
-    emit $ AllocArray tmpName value
+    emit $ case elemType of
+        TString -> AllocArrayString tmpName value
+        _ -> AllocArray tmpName value
     return $ Object tmpName
 transpileExpr (Abs.EArrayElem _ expr1 expr2) = do
     array <- transpileExpr expr1

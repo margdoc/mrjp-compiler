@@ -67,6 +67,7 @@ data Statement = BinaryOp BinaryOpType VarName Value Value
                | Store Value Value Value    -- value1[value2] = value3
                | ArrayLength VarName Value
                | AllocArray VarName Value
+               | AllocArrayString VarName Value
                | Get VarName Value VarName VarName
                | Set Value VarName VarName Value
                | AllocObject VarName String
@@ -91,6 +92,7 @@ instance Show Statement where
     show (Store value1 value2 value3) = show value1 ++ "[" ++ show value2 ++ "] = " ++ show value3
     show (ArrayLength varName value) = varName ++ " = " ++ show value ++ ".length"
     show (AllocArray varName value) = varName ++ " = new[" ++ show value ++ "]"
+    show (AllocArrayString varName value) = varName ++ " = new(string)[" ++ show value ++ "]"
     show (Get varName value className varName') = varName ++ " = " ++ show value ++ "." ++ className ++ "." ++ varName'
     show (Set value className varName' value') = show value ++ "." ++ className ++ "." ++ varName' ++ " = " ++ show value'
     show (AllocObject varName string) = varName ++ " = new " ++ string
@@ -148,6 +150,7 @@ varNames (Load varName value1 value2) = (Just varName, mapMaybe varNameFromValue
 varNames (Store value1 value2 value3) = (Nothing, mapMaybe varNameFromValue [value1, value2, value3])
 varNames (ArrayLength varName value) = (Just varName, mapMaybe varNameFromValue [value])
 varNames (AllocArray varName value) = (Just varName, mapMaybe varNameFromValue [value])
+varNames (AllocArrayString varName value) = (Just varName, mapMaybe varNameFromValue [value])
 varNames (Get varName value _ _) = (Just varName, mapMaybe varNameFromValue [value])
 varNames (Set value _ _ value') = (Nothing, mapMaybe varNameFromValue [value, value'])
 varNames (AllocObject varName _) = (Just varName, [])
@@ -175,6 +178,7 @@ replaceValue ifValue nextValue = \case
     Store value1 value2 value3 -> Store (replaceValueIf ifValue nextValue value1) (replaceValueIf ifValue nextValue value2) (replaceValueIf ifValue nextValue value3)
     ArrayLength varName value -> ArrayLength varName (replaceValueIf ifValue nextValue value)
     AllocArray varName value -> AllocArray varName (replaceValueIf ifValue nextValue value)
+    AllocArrayString varName value -> AllocArrayString varName (replaceValueIf ifValue nextValue value)
     Get varName value className varName' -> Get varName (replaceValueIf ifValue nextValue value) className varName'
     Set value className varName' value' -> Set (replaceValueIf ifValue nextValue value) className varName' (replaceValueIf ifValue nextValue value')
     AllocObject varName string -> AllocObject varName string
@@ -202,6 +206,7 @@ renameOutput oldName newName = \case
     Store value1 value2 value3 -> Store value1 value2 value3
     ArrayLength varName value -> ArrayLength (rename oldName newName varName) value
     AllocArray varName value -> AllocArray (rename oldName newName varName) value
+    AllocArrayString varName value -> AllocArrayString (rename oldName newName varName) value
     Get varName value className varName' -> Get (rename oldName newName varName) value className varName'
     Set value className varName' value' -> Set value className varName' value'
     AllocObject varName string -> AllocObject (rename oldName newName varName) string
@@ -232,6 +237,7 @@ mapNames f = \case
     Store value1 value2 value3 -> Store (mapValueName f value1) (mapValueName f value2) (mapValueName f value3)
     ArrayLength varName value -> ArrayLength (f varName) (mapValueName f value)
     AllocArray varName value -> AllocArray (f varName) (mapValueName f value)
+    AllocArrayString varName value -> AllocArrayString (f varName) (mapValueName f value)
     Get varName value className varName' -> Get (f varName) (mapValueName f value) className varName'
     Set value className varName' value' -> Set (mapValueName f value) className varName' (mapValueName f value')
     AllocObject varName string -> AllocObject (f varName) string
@@ -275,6 +281,7 @@ isPure = \case
     Load {} -> True
     ArrayLength _ _ -> True
     AllocArray _ _ -> True
+    AllocArrayString _ _ -> True
     Get {} -> True
     AllocObject _ _ -> True
     Assign _ _ -> True

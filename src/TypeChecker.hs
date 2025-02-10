@@ -532,9 +532,36 @@ classMethodsDefs classDef = map (\(Abs.ClassFnDef _ fnDef) -> fnDef) methods
       Abs.ClassDefSimple _ _ m -> m
       Abs.ClassDefExtended _ _ _ m -> m
 
+classAtrtibutesDefs :: Abs.ClassDef -> [Abs.AttrDef]
+classAtrtibutesDefs classDef = map (\(Abs.ClassAttrDef _ attrDef) -> attrDef) attributes
+  where
+    attributes = filter (\case
+        Abs.ClassAttrDef _ _ -> True
+        _ -> False
+      ) $ case classDef of
+      Abs.ClassDefSimple _ _ m -> m
+      Abs.ClassDefExtended _ _ _ m -> m
+
+checkType :: Type -> TypeChecker ()
+checkType = \case
+  TClass className -> asks (getClass className) >>= \case
+    Nothing -> throwException $ TCClassNotDeclared className
+    Just _ -> return ()
+  TArray t -> checkType t
+  _ -> return ()
+
+checkAttribute :: Abs.AttrDef -> TypeChecker ()
+checkAttribute = errorHandlerDecorator $ \case
+  Abs.AttrDef _ typeName _ -> case typeName of
+    Abs.ClassType _ (Abs.Ident name) -> asks (getClass name) >>= \case
+      Nothing -> throwException $ TCClassNotDeclared name
+      Just _ -> return ()
+    Abs.Array _ t -> evalType True t >>= checkType
+    _ -> return ()
 
 checkClass :: Name -> Abs.ClassDef -> ClassDef -> TypeChecker ()
-checkClass className absClassDef classDef =
+checkClass className absClassDef classDef = do
+  local (classContextToEnvChange classDef) $ mapM_ checkAttribute $ classAtrtibutesDefs absClassDef
   local (classContextToEnvChange classDef) $ mapM_ (checkFunction (Just $ TClass className)) $ classMethodsDefs absClassDef
 
 
