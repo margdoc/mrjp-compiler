@@ -1,10 +1,15 @@
 # Latte Compiler
 
 This code was written as a university project. The task description, written in Polish, can be found [here](https://www.mimuw.edu.pl/~ben/Zajecia/Mrj2022/latte.html). The specification of the Latte language for this task is available [here](https://www.mimuw.edu.pl/~ben/Zajecia/Mrj2022/Latte/).
-
-
 I chose Haskell for this project because I enjoy working with it, and it was recommended by the lecturer.
 This version (uploaded to GitHub) does not meet the technical requirements for code structure.
+
+Compiler compiles Latte language program to x86_64.
+
+## Requirements
+- `gcc` - for compiling C code
+- `ghc` - for compiling Haskell code
+- `bnfc,alex,happy` - for creating Latte parser
 
 ## Score
 This code scored **30.5/34 points**, the highest score among students in my year.
